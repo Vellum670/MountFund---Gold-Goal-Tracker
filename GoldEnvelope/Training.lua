@@ -53,13 +53,18 @@ function ns.ClassCatalog()
     local raceID
     if UnitRace then local _, _, id = UnitRace("player"); raceID = id end
     local rows, matched = {}, {}
+    local prerequisites={}
+    for _,base in ipairs(ns.ClassTrainingData[class] or {}) do
+        if base.requiresSpell then prerequisites[base.name]=base.requiresSpell end
+    end
     for _, base in ipairs(ns.ClassTrainingData[class] or {}) do
         local entry = {}
         for key, value in pairs(base) do entry[key] = value end
         entry.key, entry.source, entry.class = "class:" .. base.spellID, "class", class
         entry.name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(base.spellID) or base.name
         entry.paid, entry.priceSource = known(base.spellID), "base price"
-        entry.eligible = not base.requiresSpell or known(base.requiresSpell)
+        entry.requiresSpell=prerequisites[base.name] or base.requiresSpell
+        entry.eligible = not entry.requiresSpell or known(entry.requiresSpell)
         if base.races and raceID then
             local eligibleRace = false
             for _, id in ipairs(base.races) do if id == raceID then eligibleRace = true end end
@@ -119,7 +124,7 @@ function ns.TrainingRunway(goal, force, goals, levelOverride)
         end
     end
     if goal then addSelections(goal) end
-    for _, g in ipairs(goals or (not goal and ns.db.goals) or {}) do
+    for _, g in ipairs(goals or (not goal and ns.GetGoals()) or {}) do
         if g.active and g.includeClassTraining then enabled = true; addSelections(g) end
     end
     if not enabled then return 0, true end
@@ -246,6 +251,7 @@ function ns.CaptureTrainerPrices()
         end
     end
     for _, goal in ipairs(ns.db.goals) do ns.SyncExpenses(goal) end
+    if ns.testGoals then for _, goal in ipairs(ns.testGoals) do ns.SyncExpenses(goal) end end
     ns.Changed()
     if ns.CatalogChanged then ns.CatalogChanged() end
 end

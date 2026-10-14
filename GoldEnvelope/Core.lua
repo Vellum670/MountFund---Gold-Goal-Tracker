@@ -3,11 +3,46 @@ ns.name = addonName
 ns.revision = 0
 ns.WARNING_COOLDOWN_SECONDS = 120
 ns.warningCooldownUntil = 0
+ns.TEST_COMMAND_PASSWORD = "Quantum123"
 
--- TEMPORARY: session-only level simulation for in-game testing. Remove this
--- override, its resets, and /ge testlevel before the final release.
+function ns.Now() return GetServerTime and GetServerTime() or time() end
+
+function ns.GetPlayedSeconds()
+    return (ns.db and ns.db.playedSeconds or 0)+(ns.playStartedAt and math.max(0,GetTime()-ns.playStartedAt) or 0)
+end
+
+function ns.FlushPlayClock()
+    if ns.db and ns.playStartedAt then ns.db.playedSeconds=ns.GetPlayedSeconds() end
+    ns.playStartedAt=nil
+end
+
+function ns.ParseGoalDate(text)
+    local y,m,d=text:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
+    y,m,d=tonumber(y),tonumber(m),tonumber(d)
+    if not y or m<1 or m>12 or d<1 or d>31 or y<1970 or y>2100 then return nil,"Use YYYY-MM-DD." end
+    local epoch=time({year=y,month=m,day=d,hour=23,min=59,sec=59})
+    local check=date("*t",epoch)
+    if check.year~=y or check.month~=m or check.day~=d then return nil,"Choose a valid calendar date." end
+    return epoch
+end
+
+-- Test overrides live only in this Lua session. Real purchases always use the
+-- character's actual money and level.
 function ns.GetPlayerLevel()
     return ns.testPlayerLevel or UnitLevel("player")
+end
+
+function ns.GetPlayerMoney()
+    if ns.testMoneyCopper ~= nil then return ns.testMoneyCopper end
+    return GetMoney()
+end
+
+function ns.GetGoals()
+    return ns.testGoals or ns.db.goals
+end
+
+function ns.SetGoals(goals)
+    if ns.testGoals then ns.testGoals = goals else ns.db.goals = goals end
 end
 
 function ns.WarningCooldownRemaining()
@@ -19,8 +54,9 @@ function ns.Print(text)
 end
 
 function ns.GetBudget()
-    local training, complete = ns.TrainingRunway()
-    local budget = ns.Model.Budget(ns.db.goals, ns.GetPlayerLevel(), GetMoney(), training)
+    local goals = ns.GetGoals()
+    local training, complete = ns.TrainingRunway(nil, nil, goals)
+    local budget = ns.Model.Budget(goals, ns.GetPlayerLevel(), ns.GetPlayerMoney(), training)
     budget.trainingComplete = complete
     return budget
 end
@@ -30,9 +66,9 @@ function ns.BuildLevelUpSummary(level)
     if not ns.db then return nil end
     if type(level) ~= "number" or level ~= math.floor(level) or level < 1
         or level > ns.Model.MAX_LEVEL then return nil end
-    local balance = GetMoney()
+    local balance = ns.GetPlayerMoney()
     local goals={}
-    for index,goal in ipairs(ns.db.goals) do goals[index]=ns.Model.CopyGoal(goal) end
+    for index,goal in ipairs(ns.GetGoals()) do goals[index]=ns.Model.CopyGoal(goal) end
     ns.Model.Reconcile(goals, balance)
     local ordered = {}
     for index, goal in ipairs(goals) do
@@ -40,10 +76,14 @@ function ns.BuildLevelUpSummary(level)
     end
     if #ordered == 0 then return nil end
     table.sort(ordered, function(a, b)
+        if ns.Model.IsTimeGoal(a.goal) or ns.Model.IsTimeGoal(b.goal) then
+            local pa,pb=ns.Model.Priority(a.goal,level),ns.Model.Priority(b.goal,level)
+            if pa~=pb then return pa<pb end
+        end
         if a.goal.targetLevel ~= b.goal.targetLevel then return a.goal.targetLevel < b.goal.targetLevel end
         return a.index < b.index
     end)
-    local training, trainingComplete = ns.TrainingRunway(nil, nil, nil, level)
+    local training, trainingComplete = ns.TrainingRunway(nil, nil, goals, level)
     local budget = ns.Model.Budget(goals, level, balance, training)
     local summary = { level = level, balance = balance, goals = {}, activeCount = #ordered,
         remainingCount = math.max(0, #ordered - 2) }
@@ -51,7 +91,7 @@ function ns.BuildLevelUpSummary(level)
         local goal = ordered[index].goal
         local progress = ns.Model.GoalProgress(goal, level)
         local preset = ns.FindPreset and ns.FindPreset(goal.presetID)
-        local row = { name = goal.name, targetLevel = goal.targetLevel,
+        local row = { name = goal.name, targetLevel = goal.targetLevel, goalType=goal.goalType,
             icon = goal.icon or (preset and preset.icon) or "Interface\\Icons\\INV_Misc_Coin_01",
             saved = progress.saved, target = progress.target, expected = progress.expected,
             percent = progress.percent, ahead = progress.ahead, behind = progress.behind }
@@ -71,18 +111,20 @@ function ns.BuildLevelUpSummary(level)
 end
 
 function ns.PrepareGoal(goal, replacing)
+    if goal.goalType=="date" and not goal.startTime then goal.startTime=ns.Now() end
+    if goal.goalType=="played" and not goal.startPlayed then goal.startPlayed=math.floor(ns.GetPlayedSeconds()) end
     if not goal.startLevel then goal.startLevel = math.max(1, ns.GetPlayerLevel()) end
     ns.SyncExpenses(goal)
     if goal.savedCopper == nil then
         local allocated, trainingGoals = 0, {}
-        for _, existing in ipairs(ns.db.goals) do
+        for _, existing in ipairs(ns.GetGoals()) do
             if existing ~= replacing and existing.active then
                 allocated = allocated + (existing.savedCopper or 0)
                 trainingGoals[#trainingGoals + 1] = existing
             end
         end
         local training, complete = ns.TrainingRunway(goal, true, trainingGoals)
-        goal.initialCopper = complete and ns.Model.InitialInvestment(GetMoney(), training, allocated,
+        goal.initialCopper = complete and ns.Model.InitialInvestment(ns.GetPlayerMoney(), training, allocated,
             goal.initialPercent, goal.initialOverrideCopper, goal.targetCopper) or 0
         goal.savedCopper = goal.initialCopper
     end
@@ -102,7 +144,7 @@ function ns.ObserveMoney()
         record.income = record.income + difference
         -- Actual income still uses the character's real training needs while
         -- a test level is active; previewing levels must not change funding.
-        ns.Model.FundGoals(ns.db.goals, difference, balance, ns.TrainingRunway(nil, nil, nil, level))
+        ns.Model.FundGoals(ns.db.goals, difference, balance, ns.TrainingRunway(nil, nil, ns.db.goals, level), level)
     else
         record.spending = record.spending - difference
         ns.Model.Reconcile(ns.db.goals, balance)
@@ -137,8 +179,9 @@ function ns.RequestPurchase(read, execute)
         ns.Print("Cannot read this purchase's price. Select it again.")
         return
     end
-    local budget = ns.Model.Purchase(ns.db.goals, ns.GetPlayerLevel(), GetMoney(), action.cost,
-        ns.TrainingRunway(), action.classTraining)
+    local level = UnitLevel("player")
+    local budget = ns.Model.Purchase(ns.db.goals, level, GetMoney(), action.cost,
+        ns.TrainingRunway(nil, nil, ns.db.goals, level), action.classTraining)
     if not budget.affordable then ns.Print("You do not have enough money for this purchase."); return end
     if ns.db.warnings and budget.warning and ns.WarningCooldownRemaining() == 0 then
         ns.pending = { read = read, execute = execute, action = action, budget = budget, revision = ns.revision }
@@ -157,8 +200,9 @@ function ns.ConfirmPurchase()
         ns.Print("The selection or price changed. Select the purchase again.")
         return
     end
-    local budget = ns.Model.Purchase(ns.db.goals, ns.GetPlayerLevel(), GetMoney(), action.cost,
-        ns.TrainingRunway(), action.classTraining)
+    local level = UnitLevel("player")
+    local budget = ns.Model.Purchase(ns.db.goals, level, GetMoney(), action.cost,
+        ns.TrainingRunway(nil, nil, ns.db.goals, level), action.classTraining)
     if not budget.affordable then ns.Print("You no longer have enough money for this purchase."); return end
     if budget.warning and (budget.balance ~= pending.budget.balance
         or budget.reserved ~= pending.budget.reserved or pending.revision ~= ns.revision) then
@@ -172,13 +216,15 @@ function ns.ConfirmPurchase()
 end
 
 local function StartSession()
-    ns.testPlayerLevel = nil
+    ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals = nil, nil, nil
+    if ns.RefreshTestContext then ns.RefreshTestContext() end
     ns.CancelPurchase()
     if ns.HideLevelUpToast then ns.HideLevelUpToast() end
     if ns.sessionStarted then return end
     ns.sessionStarted = true
     ns.lastMoney = GetMoney()
     ns.lastLevelUpEvent = UnitLevel("player")
+    if not ns.playStartedAt then ns.playStartedAt=GetTime() end
     for _, goal in ipairs(ns.db.goals) do
         if not goal.startLevel then
             if goal.curve == 2 then goal.curve = 0 end
@@ -194,11 +240,12 @@ local function StartSession()
 end
 
 local function Initialize()
-    ns.testPlayerLevel = nil
+    ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals = nil, nil, nil
     ns.CancelPurchase()
     if ns.HideLevelUpToast then ns.HideLevelUpToast() end
     GoldEnvelopeDB = type(GoldEnvelopeDB) == "table" and GoldEnvelopeDB or {}
     ns.db = GoldEnvelopeDB
+    if type(ns.db.playedSeconds)~="number" or ns.db.playedSeconds~=ns.db.playedSeconds or ns.db.playedSeconds<0 or ns.db.playedSeconds==math.huge then ns.db.playedSeconds=0 end
     if ns.db.warnings == nil then ns.db.warnings = true end
     if ns.db.levelUpToasts == nil then ns.db.levelUpToasts = true end
     ns.db.goals = type(ns.db.goals) == "table" and ns.db.goals or {}
@@ -208,10 +255,12 @@ local function Initialize()
     end
     if #valid ~= #ns.db.goals then ns.Print("Some saved goals were invalid and were skipped.") end
     ns.db.goals = valid
+    if ns.RefreshTestContext then ns.RefreshTestContext() end
 end
 
 local frame = CreateFrame("Frame")
-for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_LOGOUT", "PLAYER_MONEY", "PLAYER_LEVEL_UP",
+for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_LOGOUT", "PLAYER_ENTERING_WORLD", "PLAYER_LEAVING_WORLD",
+    "DISPLAY_SIZE_CHANGED", "UI_SCALE_CHANGED", "PLAYER_MONEY", "PLAYER_LEVEL_UP",
     "MERCHANT_SHOW", "MERCHANT_CLOSED", "TRAINER_SHOW", "TRAINER_CLOSED",
     "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "PLAYER_REGEN_ENABLED",
     "TRAINER_UPDATE", "TRAINER_SERVICE_INFO_NAME_UPDATE" }) do
@@ -221,8 +270,14 @@ frame:SetScript("OnEvent", function(_, event, arg)
     if event == "ADDON_LOADED" and arg == addonName then Initialize() end
     if not ns.db then return end
     if event == "PLAYER_LOGIN" then StartSession() end
+    if event=="PLAYER_ENTERING_WORLD" then ns.outOfWorld=false; if not ns.playStartedAt then ns.playStartedAt=GetTime() end end
+    if event=="PLAYER_LEAVING_WORLD" then ns.outOfWorld=true; ns.FlushPlayClock() end
+    if (event=="DISPLAY_SIZE_CHANGED" or event=="UI_SCALE_CHANGED") and ns.ApplyToastPosition then ns.ApplyToastPosition() end
     if event == "PLAYER_LOGOUT" then
-        ns.testPlayerLevel = nil
+        ns.FlushPlayClock()
+        ns.outOfWorld=true
+        ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals = nil, nil, nil
+        if ns.RefreshTestContext then ns.RefreshTestContext() end
         ns.CancelPurchase()
         if ns.HideLevelUpToast then ns.HideLevelUpToast() end
         return
@@ -254,48 +309,111 @@ frame:SetScript("OnEvent", function(_, event, arg)
     end
 end)
 
+local refreshElapsed=0
+frame:SetScript("OnUpdate",function(_,elapsed)
+    if not ns.db or not ns.sessionStarted then return end
+    refreshElapsed=refreshElapsed+elapsed
+    if refreshElapsed>=10 then
+        refreshElapsed=0
+        ns.FlushPlayClock()
+        if not ns.outOfWorld then ns.playStartedAt=GetTime() end
+        ns.Changed()
+    end
+end)
+
 SLASH_GOLDENVELOPE1 = "/envelope"
 SLASH_GOLDENVELOPE2 = "/ge"
+
+local function RefreshTestPreview(showToast, refreshGoalContext)
+    ns.CancelPurchase()
+    if ns.HideLevelUpToast then ns.HideLevelUpToast() end
+    if refreshGoalContext and ns.RefreshTestContext then ns.RefreshTestContext() end
+    ns.Changed()
+    if ns.RefreshExpensePlanner then ns.RefreshExpensePlanner() end
+    if showToast and ns.TestLevelUpToast then ns.TestLevelUpToast() end
+end
+
+local function TestGoldUsage()
+    ns.Print("Usage: /ge testgold gold [silver [copper]] <password>, /ge testgold reset <password>, or /ge testgold <password>.")
+end
+
 SlashCmdList.GOLDENVELOPE = function(message)
     if not ns.db then return end
     local command, argument = message:match("^%s*(%S+)%s*(.-)%s*$")
+    if command == "testlevel" or command == "testgold" or command == "testtoast" then
+        local values, password = (argument or ""):match("^(.-)%s*(%S+)$")
+        if password ~= ns.TEST_COMMAND_PASSWORD then
+            ns.Print("Test commands require the password as their last argument.")
+            return
+        end
+        argument = values:match("^%s*(.-)%s*$")
+    end
     if command == "testlevel" then
-        -- TEMPORARY: never store the simulated level in SavedVariables.
         if argument == "" then
             ns.Print(ns.testPlayerLevel and ("Test level: " .. ns.testPlayerLevel
                 .. "; actual level: " .. UnitLevel("player") .. ".")
                 or ("Test level inactive; actual level: " .. UnitLevel("player") .. "."))
-            ns.Print("Usage: /ge testlevel 1-60 or /ge testlevel reset. Clears on reload, logout, or character change.")
+            ns.Print("Usage: /ge testlevel 1-60 <password> or /ge testlevel reset <password>. Clears on reload, logout, or character change.")
         elseif argument == "reset" then
             ns.testPlayerLevel = nil
-            ns.CancelPurchase()
-            if ns.HideLevelUpToast then ns.HideLevelUpToast() end
-            ns.Changed()
-            if ns.RefreshExpensePlanner then ns.RefreshExpensePlanner() end
+            RefreshTestPreview(false)
             ns.Print("Test level reset; using actual level " .. UnitLevel("player") .. ".")
         else
             local level = argument:match("^%d+$") and tonumber(argument)
             if not level or level ~= math.floor(level) or level < 1 or level > ns.Model.MAX_LEVEL then
-                ns.Print("Usage: /ge testlevel 1-60 or /ge testlevel reset.")
+                ns.Print("Usage: /ge testlevel 1-60 <password> or /ge testlevel reset <password>.")
                 return
             end
             ns.testPlayerLevel = level
-            ns.CancelPurchase()
-            if ns.HideLevelUpToast then ns.HideLevelUpToast() end
-            ns.Changed()
-            if ns.RefreshExpensePlanner then ns.RefreshExpensePlanner() end
-            if ns.TestLevelUpToast then ns.TestLevelUpToast() end
+            RefreshTestPreview(true)
             ns.Print("Test level set to " .. level .. " (actual level " .. UnitLevel("player")
-                .. "). Goals and money are unchanged; clears on reload or logout.")
+                .. "). Clears on reload or logout.")
         end
+    elseif command == "testgold" then
+        if argument == "" then
+            ns.Print(ns.testMoneyCopper ~= nil and ("Test gold: " .. ns.Model.FormatCoins(ns.testMoneyCopper)
+                .. "; actual wallet: " .. ns.Model.FormatCoins(GetMoney()) .. ".")
+                or ("Test gold inactive; actual wallet: " .. ns.Model.FormatCoins(GetMoney()) .. "."))
+            TestGoldUsage()
+        elseif argument == "reset" then
+            ns.testMoneyCopper, ns.testGoals = nil, nil
+            RefreshTestPreview(false, true)
+            ns.Print("Test gold reset; using actual wallet " .. ns.Model.FormatCoins(GetMoney()) .. ".")
+        else
+            local coins = {}
+            for value in argument:gmatch("%S+") do coins[#coins + 1] = value end
+            if #coins < 1 or #coins > 3 then TestGoldUsage(); return end
+            local balance, problem = ns.Model.ParseCoins(coins[1], coins[2], coins[3])
+            if not balance then ns.Print(problem); TestGoldUsage(); return end
+            local previous = ns.GetPlayerMoney()
+            if not ns.testGoals then
+                ns.testGoals = {}
+                for index, goal in ipairs(ns.db.goals) do ns.testGoals[index] = ns.Model.CopyGoal(goal) end
+            end
+            ns.testMoneyCopper = balance
+            local difference = balance - previous
+            if difference > 0 then
+                ns.Model.FundGoals(ns.testGoals, difference, balance,
+                    ns.TrainingRunway(nil, nil, ns.testGoals, ns.GetPlayerLevel()))
+            else ns.Model.Reconcile(ns.testGoals, balance) end
+            RefreshTestPreview(true, true)
+            ns.Print("Test gold set to " .. ns.Model.FormatCoins(balance) .. "; actual wallet "
+                .. ns.Model.FormatCoins(GetMoney()) .. ". Test goal progress clears on reload or logout.")
+        end
+    elseif command == "testtoast" then
+        if argument ~= "" then
+            ns.Print("Usage: /ge testtoast <password>.")
+            return
+        end
+        if ns.TestLevelUpToast then ns.TestLevelUpToast() end
+        ns.Print("Preview only; your goals and money are unchanged.")
     elseif message:match("^%s*status%s*$") then
+        ns.Model.Reconcile(ns.GetGoals(), ns.GetPlayerMoney())
         local budget = ns.GetBudget()
-        ns.Model.Reconcile(ns.db.goals, GetMoney())
-        budget = ns.GetBudget()
-        ns.Print("Wallet: " .. ns.Model.FormatCoins(budget.balance) .. "; saved toward goals: "
+        ns.Print((ns.testMoneyCopper~=nil and "Test wallet: " or "Wallet: ") .. ns.Model.FormatCoins(budget.balance) .. "; saved toward goals: "
             .. ns.Model.FormatCoins(budget.saved) .. "; " .. (budget.behind > 0 and "behind: " or "ahead: ")
             .. ns.Model.FormatCoins(budget.behind > 0 and budget.behind or budget.ahead))
-        for _, goal in ipairs(ns.db.goals) do
+        for _, goal in ipairs(ns.GetGoals()) do
             if goal.active then
                 local progress = ns.Model.GoalProgress(goal, ns.GetPlayerLevel())
                 if goal.targetCopper == 0 and goal.includeClassTraining then
@@ -309,13 +427,10 @@ SlashCmdList.GOLDENVELOPE = function(message)
         end
         if budget.trainingDue > 0 then ns.Print("Next two levels' training: " .. ns.Model.FormatCoins(budget.trainingDue)
             .. "; funded: " .. ns.Model.FormatCoins(budget.trainingFunded)) end
-    elseif message:match("^%s*testtoast%s*$") then
-        -- Temporary preview command while checking the toast in-game.
-        if ns.TestLevelUpToast then ns.TestLevelUpToast() end
-        ns.Print("Preview only; your goals and money are unchanged.")
     elseif message:match("^%s*toasts%s*$") then
         ns.db.levelUpToasts = not ns.db.levelUpToasts
         if not ns.db.levelUpToasts and ns.HideLevelUpToast then ns.HideLevelUpToast() end
+        ns.Changed()
         ns.Print("Level-up goal updates " .. (ns.db.levelUpToasts and "enabled." or "disabled."))
     else
         ns.ToggleUI()

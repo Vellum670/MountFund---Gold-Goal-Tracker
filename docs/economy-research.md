@@ -1,7 +1,7 @@
 # Economy research and budgeting assumptions
 
 Research date: October 14, 2026. Economy model introduced in version 0.3.0;
-UI and selection notes updated for version 0.3.2.
+UI, selection, and scheduling notes updated for version 0.4.0.
 
 ## What can be supported by the evidence
 
@@ -92,6 +92,11 @@ trainer prerequisites. An ability icon controls all its ranks; exclusions persis
 training remains in the current training budget; unobserved historical ranks are
 not automatically charged to a newly created goal.
 
+The icon grid uses the current character's class and level. Each ability shows
+its next unlearned rank, sorted by the required level, including upgrades beyond
+the current goal's deadline. Fully learned abilities are hidden. Quest or talent
+prerequisites apply to later trainer ranks as well as the first cataloged rank.
+
 ## Initial investment and training coexistence
 
 The automatic background investment defaults to 20% of the current wallet. It cannot exceed
@@ -122,6 +127,22 @@ credited as historical income.
 
 The native [Forever TradeFrame XML](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_UIPanels_Game/Mainline/TradeFrame.xml)
 specifies 344 × 446 UI units. Gold Envelope's main frame now uses 400 × 450,
-with a separate goal-list flyout and expense chooser. Automated tests check
+with menus as pages of that same frame. Short lists, presets, settings, training,
+expense grids, and savings plans use smaller heights. Automated tests check
 dimensions and interactions; visual fit and real game API behavior still need
 client validation.
+
+## Calendar and play-time goals
+
+Time goals schedule the remaining goal amount across elapsed calendar time or
+hours logged into the character. They default to steady saving; the other named
+custom curves can defer more of the target toward the deadline. The quest-income
+weights apply only to level goals, since the addon has no evidence for how fast
+a particular player will earn gold per hour.
+
+Calendar deadlines use the end of the selected day in the computer's local time
+and advance offline. Play-time goals count time in the world, including AFK time,
+with a per-character clock saved across sessions; offline and loading-screen time
+do not advance that clock. Both compare actual allocations against their expected
+target. Passing time never creates savings. Class training retains its rolling
+level-based budget independently of a time goal's deadline.

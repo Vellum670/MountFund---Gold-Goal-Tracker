@@ -1,8 +1,8 @@
 ## Interface: 16001
 ## Title: Gold Envelope
-## Notes: Level-based savings goals and confirmations before spending reserved money.
+## Notes: Savings goals by level, date, or play time, with protected spending confirmations.
 ## Author: WoW-Forever-Addon
-## Version: 0.3.5
+## Version: 0.4.0
 ## SavedVariablesPerCharacter: GoldEnvelopeDB
 
 Data/IncomeWeights.lua

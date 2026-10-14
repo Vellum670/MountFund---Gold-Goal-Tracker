@@ -4,6 +4,34 @@ ns.Model = Model
 
 Model.MAX_LEVEL = 60
 Model.MAX_COPPER = 1000000000000
+Model.CURVES = {
+    [0]={name="Income-based",description="Save more as earnings rise with your level."},
+    [1]={name="Steady saving",description="Add the same amount throughout the goal."},
+    [2]={name="Save more later",description="Start gently and increase saving toward the deadline."},
+    [3]={name="Light start",description="Keep early saving small, with more to add later."},
+    [4]={name="Late push",description="Put most saving near the end of the goal."},
+}
+
+function Model.IsTimeGoal(goal)
+    return goal.goalType=="date" or goal.goalType=="played"
+end
+
+function Model.ScheduleFraction(goal, level)
+    local start,finish,current
+    if goal.goalType=="date" then
+        start,finish,current=goal.startTime or 0,goal.deadlineTime or 0,ns.Now()
+    elseif goal.goalType=="played" then
+        start=goal.startPlayed or 0; finish=start+(goal.durationSeconds or 0); current=ns.GetPlayedSeconds()
+    else
+        start,finish,current=goal.startLevel or 1,goal.targetLevel,level
+    end
+    if finish<=start then return current>=finish and 1 or 0 end
+    return math.max(0,math.min(1,(current-start)/(finish-start)))
+end
+
+function Model.Priority(goal,level)
+    return 1-Model.ScheduleFraction(goal,level or ns.GetPlayerLevel())
+end
 
 local function integer(value, minimum, maximum)
     return type(value) == "number" and value == math.floor(value)
@@ -69,6 +97,11 @@ function Model.ValidateGoal(goal)
     if not integer(goal.targetLevel, 2, Model.MAX_LEVEL) then
         return nil, "Target level must be from 2 to " .. Model.MAX_LEVEL .. "."
     end
+    if goal.goalType and goal.goalType~="level" and not Model.IsTimeGoal(goal) then return nil,"Choose a level, date, or play-time goal." end
+    if goal.goalType=="date" and (not integer(goal.startTime,0,5000000000)
+        or not integer(goal.deadlineTime,goal.startTime+1,5000000000)) then return nil,"Choose a date after this goal started." end
+    if goal.goalType=="played" and (not integer(goal.startPlayed,0,Model.MAX_COPPER)
+        or not integer(goal.durationSeconds,1,31536000)) then return nil,"Set play time between one second and one year." end
     if not integer(goal.targetCopper, (goal.planMode == "items" or goal.includeClassTraining) and 0 or 1, Model.MAX_COPPER) then
         return nil, "Set a positive savings amount."
     end
@@ -92,6 +125,7 @@ function Model.ValidateGoal(goal)
         return true
     end
     if type(goal.milestones) ~= "table" then return nil, "Invalid milestones." end
+    if Model.IsTimeGoal(goal) then return true end
     for level, amount in pairs(goal.milestones) do
         if not integer(level, (goal.startLevel or 1) + 1, goal.targetLevel - 1)
             or not integer(amount, 0, goal.targetCopper) then
@@ -131,6 +165,11 @@ function Model.Fraction(startLevel, endLevel, level, curve)
 end
 
 function Model.TargetAtLevel(goal, level)
+    if Model.IsTimeGoal(goal) then
+        local initial=math.min(goal.initialCopper or 0,goal.targetCopper)
+        local fraction=Model.ScheduleFraction(goal,level)^(goal.curve==0 and 1 or goal.curve)
+        return math.floor(initial+(goal.targetCopper-initial)*fraction)
+    end
     local start = goal.startLevel or 1
     if level < start then return 0 end
     local initial = math.min(goal.initialCopper or 0, goal.targetCopper)
@@ -193,13 +232,22 @@ function Model.Budget(goals, level, balance, trainingDue)
         trainingShortfall = trainingDue - trainingFunded, reserved = saved + trainingFunded }
 end
 
-function Model.FundGoals(goals, amount, balance, trainingDue)
+function Model.FundGoals(goals, amount, balance, trainingDue, level)
     Model.Reconcile(goals, balance)
     local budget = Model.Budget(goals, 1, balance, trainingDue)
     local left = math.min(amount, math.max(0, balance - budget.saved - (trainingDue or 0)))
     local ordered = {}
     for _, goal in ipairs(goals) do if goal.active then ordered[#ordered + 1] = goal end end
-    table.sort(ordered, function(a, b) return a.targetLevel < b.targetLevel end)
+    local originalOrder={}; for index,g in ipairs(ordered) do originalOrder[g]=index end
+    local timed=false
+    for _,g in ipairs(ordered) do if Model.IsTimeGoal(g) then timed=true end end
+    table.sort(ordered, function(a,b)
+        if timed then
+            local pa,pb=Model.Priority(a,level),Model.Priority(b,level)
+            if pa~=pb then return pa<pb end
+        elseif a.targetLevel~=b.targetLevel then return a.targetLevel<b.targetLevel end
+        return originalOrder[a]<originalOrder[b]
+    end)
     for _, goal in ipairs(ordered) do
         local addition = math.min(left, math.max(0, goal.targetCopper - (goal.savedCopper or 0)))
         goal.savedCopper = (goal.savedCopper or 0) + addition

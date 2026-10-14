@@ -7,6 +7,7 @@ local function inCombat()
 end
 
 function ns.HideLevelUpToast()
+    if ns.toastMoving and ns.FinishToastMove then ns.FinishToastMove(); return end
     ns.pendingLevelUpToast = nil
     if ns.levelUpToast then
         ns.levelUpToast.startedAt = nil
@@ -54,10 +55,10 @@ local function showPending()
             row.status:SetText("Goal funded!"); r, g, b = 1, 0.82, 0.2
         elseif progress.status == "behind" then
             row.status:SetText("Behind " .. ns.MoneyText(progress.behind)
-                .. (progress.training and " on upcoming training" or " on this level's plan"))
+                .. (progress.training and " on upcoming training" or " on your savings plan"))
             r, g, b = 0.95, 0.77, 0.4
         elseif progress.status == "ahead" then
-            row.status:SetText("Ahead " .. ns.MoneyText(progress.ahead) .. " of this level's plan")
+            row.status:SetText("Ahead " .. ns.MoneyText(progress.ahead) .. " of your savings plan")
         else
             row.status:SetText(progress.training and "Upcoming training covered" or "Right on track")
         end
@@ -74,6 +75,7 @@ local function showPending()
 end
 
 local function onUpdate(frame)
+    if ns.toastMoving then frame:SetAlpha(1); return end
     if inCombat() then
         -- Resume with a fresh snapshot after combat, without stacking cards.
         if not ns.pendingLevelUpToast and frame.startedAt then
@@ -99,7 +101,7 @@ local function createToast()
     local frame = CreateFrame("Frame", "GoldEnvelopeLevelUpToast", UIParent, "BackdropTemplate")
     ns.levelUpToast = frame
     frame:SetSize(330, 130)
-    frame:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", -40, 210)
+    ns.ApplyToastPosition()
     frame:SetFrameStrata("LOW")
     frame:EnableMouse(false); frame:EnableKeyboard(false)
     frame:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -140,6 +142,11 @@ local function createToast()
     end
     frame.footer = UI.Label(frame, "", 16, 0, 298, "GameFontDisableSmall")
     frame:SetScript("OnUpdate", onUpdate)
+    frame:SetMovable(true); frame:SetClampedToScreen(true); frame:RegisterForDrag("LeftButton")
+    frame:SetScript("OnDragStart",function(self) if ns.toastMoving then self:StartMoving() end end)
+    frame:SetScript("OnDragStop",function(self) self:StopMovingOrSizing() end)
+    frame:SetScript("OnHide",function() if ns.toastMoving then ns.FinishToastMove() end end)
+    tinsert(UISpecialFrames,"GoldEnvelopeLevelUpToast")
     frame:SetAlpha(0); frame:Hide()
     return frame
 end
@@ -156,15 +163,53 @@ end
 
 function ns.QueueLevelUpToast(level)
     if not ns.db.levelUpToasts or not ns.BuildLevelUpSummary(level) then return end
-    ns.pendingLevelUpToast = { level = level, preview = ns.testPlayerLevel ~= nil, readyAt = GetTime() + 0.5 }
+    ns.pendingLevelUpToast = { level = level, preview = ns.testPlayerLevel ~= nil or ns.testMoneyCopper ~= nil, readyAt = GetTime() + 0.5 }
     if inCombat() and ns.levelUpToast then
         ns.levelUpToast.startedAt = nil; ns.levelUpToast:SetAlpha(0); ns.levelUpToast:Hide()
     end
     ns.FlushLevelUpToast()
 end
 
--- TEMPORARY: remove this helper and /ge testtoast after in-game review.
+-- Explicit command preview; the slash handler checks the trailing password.
 function ns.TestLevelUpToast()
     ns.pendingLevelUpToast = { level = ns.GetPlayerLevel(), preview = true, readyAt = GetTime() }
     ns.FlushLevelUpToast()
+end
+
+local function screenSize()
+    local w=UIParent.GetWidth and UIParent:GetWidth() or 1920
+    local h=UIParent.GetHeight and UIParent:GetHeight() or 1080
+    return math.max(1,w),math.max(1,h)
+end
+function ns.ApplyToastPosition()
+    local frame=ns.levelUpToast; if not frame or ns.toastMoving then return end
+    local w,h=screenSize(); local position=ns.db and ns.db.toastPosition
+    local x,y=0.5,0.895
+    if position and type(position.x)=="number" and type(position.y)=="number"
+        and position.x==position.x and position.y==position.y then
+        x,y=math.max(0,math.min(1,position.x)),math.max(0,math.min(1,position.y))
+    end
+    frame:ClearAllPoints(); frame:SetPoint("TOP",UIParent,"TOP",(x-0.5)*w,(y-1)*h)
+end
+function ns.FinishToastMove()
+    if not ns.toastMoving then return end
+    local frame=ns.levelUpToast; frame:StopMovingOrSizing()
+    local w,h=screenSize(); local x=frame:GetCenter(); local top=frame:GetTop()
+    if x and top then ns.db.toastPosition={x=math.max(0,math.min(1,x/w)),y=math.max(0,math.min(1,top/h))} end
+    ns.toastMoving=false; ns.pendingLevelUpToast=nil
+    frame:EnableMouse(false); frame:EnableKeyboard(false); frame:SetFrameStrata("LOW")
+    frame.startedAt=nil; frame:SetAlpha(0); frame:Hide(); ns.ApplyToastPosition()
+    if ns.ui and ns.ui.moveToast then ns.ui.moveToast:SetText("Move toast") end
+end
+function ns.ToggleToastMove()
+    if ns.toastMoving then ns.FinishToastMove(); return end
+    local frame=createToast()
+    ns.pendingLevelUpToast={level=ns.GetPlayerLevel(),preview=true,readyAt=GetTime()}
+    showPending(); ns.toastMoving=true; frame:SetAlpha(1); frame:EnableMouse(true); frame:SetFrameStrata("DIALOG")
+    frame.title:SetText("Drag to move"); frame.cheer:SetText("Escape saves the position and closes the menu.")
+    if ns.ui and ns.ui.moveToast then ns.ui.moveToast:SetText("Finish moving toast") end
+end
+function ns.ResetToastPosition()
+    if ns.toastMoving then ns.FinishToastMove() end
+    ns.db.toastPosition=nil; ns.ApplyToastPosition()
 end

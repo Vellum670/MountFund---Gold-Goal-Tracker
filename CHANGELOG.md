@@ -6,6 +6,37 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 No changes queued yet.
 
+## 0.4.0 - 2026-10-14
+
+- Added calendar-date and character-play-time goals alongside level goals.
+  Calendar deadlines advance offline; play-time goals count logged-in time.
+- Moved goal lists, presets, training, expenses, plans, and settings into pages
+  of the same window, with Back navigation and smaller layouts for short pages.
+- Shrink short savings plans and expense grids to fit their rows, and tighten
+  preset and settings pages. Time plans omit the empty training column heading.
+- Added descriptive savings-curve names and silent editing. Removed save
+  confirmations and clarified the protected-spending setting.
+- Update training icons for the current class and level, showing and sorting
+  by each ability's next unlearned rank. Fully learned abilities disappear.
+- Show observed unpaid training as the next upgrade before a later rank, then
+  advance its icon and level when it is learned.
+- Clear stale unknown-price tooltip notices when a reused icon has known costs.
+- Apply quest and talent prerequisites to every trainer rank of an ability.
+- Center the level-up toast near the top of the screen by default. Settings
+  lets you drag its preview; Escape or the move button saves the position.
+  Saved positions adapt to resolution changes.
+- Escape saves fields and settings before closing any page. Incomplete input
+  is retained separately so it can be resumed without replacing valid goals.
+
+## 0.3.6 - 2026-10-14
+
+- Added `/ge testgold` to simulate a wallet and experiment with goal funding,
+  spending, training budgets, and toast progress using session-only copies.
+- Require a password at the end of all gold, level, and toast test commands.
+- Retain the test commands in final builds. Overrides reset on reload, logout,
+  or character change; simulated goal edits never overwrite real saved goals.
+- Keep real purchases and actual earnings independent of simulated values.
+
 ## 0.3.5 - 2026-10-14
 
 - Added temporary `/ge testlevel 1-60` to simulate a character level inside

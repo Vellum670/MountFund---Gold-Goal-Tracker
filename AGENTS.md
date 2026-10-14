@@ -11,6 +11,7 @@ The user requires a changelog starting with the next build after version 0.3.1.
 - Keep the newest release first. Leave an `Unreleased` section for future work.
 - Build with `python3 scripts/package_addon.py`; it validates the release entry
   and includes the changelog in the addon-only download.
-- Before the final build, remove the temporary `/ge testlevel` and `/ge testtoast`
-  commands and their testing helpers/indicators, then update the documentation
-  and release notes. Keep these tools in testing builds until finalization.
+- Keep `/ge testgold`, `/ge testlevel`, and `/ge testtoast` in all builds,
+  including the final build. Each requires the configured trailing password.
+  Overrides and simulated goal changes must remain session-only and must never
+  change real money, saved goal progress, or actual purchase affordability.

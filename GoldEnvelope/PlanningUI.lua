@@ -1,260 +1,202 @@
 local _, ns = ...
-local UI, Model = ns.UI, ns.Model
-local planningGoal, applyPlanning, yesPlanning, noPlanning
-local manualKey
-
-local function savePlannerChange()
-    ns.SyncExpenses(planningGoal)
-    if applyPlanning then applyPlanning(Model.CopyGoal(planningGoal)) end
-end
+local UI,Model=ns.UI,ns.Model
 
 function ns.ClosePlanningWindows()
-    planningGoal, applyPlanning, yesPlanning, noPlanning = nil, nil, nil, nil
-    if ns.planningFrame then ns.planningFrame:Hide() end
-    if ns.planningConsent then ns.planningConsent:Hide() end
+    if ns.planningFrames then
+        for _,page in pairs(ns.planningFrames) do page.goal,page.onChange=nil,nil; page:Hide() end
+    end
+    if ns.planningConsent then ns.planningConsent.yes,ns.planningConsent.no=nil,nil; ns.planningConsent:Hide() end
+    if ns.ui and (ns.ui.currentPage=="training" or ns.ui.currentPage=="expenses" or ns.ui.currentPage=="planning") then ns.ShowMainPage() end
 end
-
-function ns.AskGoalPlanning(goal, onYes, onNo)
+function ns.AskGoalPlanning(goal,onYes,onNo)
+    ns.EnsureUI()
     if not ns.planningConsent then
-        local frame = UI.Window("GoldEnvelopePlanningConsent", 400, 250, "Choose how to plan this goal")
-        ns.planningConsent = frame
-        frame:SetFrameLevel(2000)
-        frame.body = UI.Label(frame, "", 26, -60, 348, "GameFontHighlightSmall")
-        frame.body:SetSpacing(5)
-        UI.Button(frame, "Choose expenses", 16, -200, 177, function()
-            local callback = yesPlanning
-            yesPlanning, noPlanning = nil, nil
-            frame:Hide()
+        local page=UI.CreatePage("planning","Planning choices",240); ns.planningConsent=page
+        page.body=UI.Label(page,"",0,0,368,"GameFontHighlightSmall"); page.body:SetSpacing(5)
+        UI.Button(page,"Choose expenses",0,-128,178,function()
+            local callback=page.yes
             if callback then callback() end
         end)
-        UI.Button(frame, "Keep simple budget", 207, -200, 177, function()
-            local callback = noPlanning
-            yesPlanning, noPlanning = nil, nil
-            frame:Hide()
-            if callback then callback() end
+        UI.Button(page,"Keep simple budget",190,-128,178,function()
+            local callback=page.no; ns.GoBack(); if callback then callback() end
         end)
-        frame:SetScript("OnHide", function() yesPlanning, noPlanning = nil, nil end)
     end
-    yesPlanning, noPlanning = onYes, onNo
-    local name = goal.name ~= "" and goal.name or "this goal"
-    ns.planningConsent.body:SetText("Would you like to choose individual expenses for " .. name
-        .. "?\n\nClick purchase icons to include or exclude them. Otherwise, keep a single savings amount."
-        .. (goal.presetID == "class-training" and "\nBundled spell estimates update from your class trainer."
-            or goal.presetID == "profession-training" and "\nPrices will come from your profession trainers." or ""))
-    ns.planningConsent:Show()
+    local page=ns.planningConsent; page.yes,page.no=onYes,onNo
+    page.body:SetText("Choose individual purchases for " .. (goal.name~="" and goal.name or "this goal")
+        .. "?\n\nClick ability icons to include or exclude them, or keep one savings amount.")
+    ns.ShowPage("planning")
 end
-
-local function showExpenseTooltip(button)
-    local item=button.expense
-    if not item then return end
+local function changed(page)
+    ns.SyncExpenses(page.goal)
+    if page.onChange then page.onChange(Model.CopyGoal(page.goal)) end
+end
+function ns.AbilityGroups(goal,classOnly)
+    local groups,byKey={},{}; local level=ns.GetPlayerLevel(); local _,class=UnitClass("player")
+    for _,item in ipairs(goal.expenses or {}) do
+        local visible=(classOnly and item.source=="class" and (not item.class or item.class==class))
+            or (not classOnly and item.source~="class")
+        if visible then
+            local isAbility=item.source=="class" or item.source=="profession"
+            local key=isAbility and item.source .. ":" .. item.name or item.key
+            local group=byKey[key]
+            if not group then group={expenses={},cost=0,readOnly=true,included=false}; byKey[key]=group; groups[#groups+1]=group end
+            group.expenses[#group.expenses+1]=item
+            if not item.paid then
+                if isAbility and item.level>=level then
+                    if not group.ready and (not group.expense or item.level<group.requiredLevel) then
+                        group.expense,group.requiredLevel,group.ready=item,item.level,false
+                    end
+                    if item.eligible~=false then group.readOnly=false; group.included=group.included or item.selected end
+                elseif isAbility and item.priceSource=="trainer quote" then
+                    if not group.ready or item.level<group.expense.level then group.expense,group.requiredLevel,group.ready=item,level,true end
+                    if item.eligible~=false then group.readOnly=false; group.included=group.included or item.selected end
+                elseif not isAbility and item.level<=goal.targetLevel then
+                    group.expense,group.requiredLevel=item,item.level; group.readOnly=false; group.included=group.included or item.selected
+                end
+                local relevant=(not isAbility or item.level>=level or item.priceSource=="trainer quote") and item.level<=goal.targetLevel
+                if relevant and item.eligible~=false then
+                    if item.copper then group.cost=group.cost+item.copper else group.unknown=true end
+                end
+            end
+        end
+    end
+    local result={}
+    for _,group in ipairs(groups) do if group.expense then result[#result+1]=group end end
+    table.sort(result,function(a,b) if a.requiredLevel~=b.requiredLevel then return a.requiredLevel<b.requiredLevel end return a.expense.name<b.expense.name end)
+    return result
+end
+local function showTooltip(button)
+    local item=button.expense; local page=button.page
     GameTooltip:SetOwner(button,"ANCHOR_RIGHT")
-    if item.spellID then
-        GameTooltip:SetSpellByID(item.spellID,false,false,true)
-    elseif item.link then
-        GameTooltip:SetHyperlink(item.link)
-    else
-        GameTooltip:SetText(item.name)
-    end
+    if item.spellID then GameTooltip:SetSpellByID(item.spellID,false,false,true)
+    elseif item.link then GameTooltip:SetHyperlink(item.link) else GameTooltip:SetText(item.name) end
     GameTooltip:AddLine(" ")
-    GameTooltip:AddLine("Next required level: " .. button.requiredLevel,1,0.82,0)
-    GameTooltip:AddLine("Cost through level " .. planningGoal.targetLevel .. ": " .. ns.MoneyText(button.cost)
+    GameTooltip:AddLine(button.ready and ("Available now (required level " .. item.level .. ")") or "Next rank: level " .. button.requiredLevel,1,0.82,0)
+    GameTooltip:AddLine("Cost through level " .. page.goal.targetLevel .. ": " .. ns.MoneyText(button.cost)
         .. (button.unknown and " (some prices unknown)" or ""),1,1,1)
-    if button.readOnly and item.paid then
-        GameTooltip:AddLine("Already learned",0.6,0.6,0.6)
-    elseif button.readOnly then
-        GameTooltip:AddLine("Not eligible for this character yet",0.6,0.6,0.6)
-    else
-        GameTooltip:AddLine(button.included and "Included - click to exclude ability" or "Excluded - click to include ability",1,0.82,0)
-    end
+    GameTooltip:AddLine(button.readOnly and "Requires its earlier talent or quest ability"
+        or button.included and "Included - click to exclude ability" or "Excluded - click to include ability",1,0.82,0)
     if item.priceSource then GameTooltip:AddLine(item.priceSource,0.6,0.6,0.6) end
-    if item.trainer then GameTooltip:AddLine("Quoted by " .. item.trainer,0.6,0.6,0.6) end
-    if item.requiresSpell then GameTooltip:AddLine("Requires its earlier talent or quest rank.",1,0.8,0.4,true) end
     GameTooltip:Show()
 end
-
-local function abilityGroups(goal,classOnly)
-    local groups,byKey={},{}
-    for _,expense in ipairs(goal.expenses) do
-        if (classOnly and expense.source=="class") or (not classOnly and expense.source~="class") then
-            local isAbility=expense.source=="class" or expense.source=="profession"
-            local key=isAbility and (expense.source .. ":" .. expense.name) or expense.key
-            local group=byKey[key]
-            if not group then
-                group={expenses={},relevant={},readOnly=true,cost=0,included=false}
-                byKey[key]=group; groups[#groups+1]=group
-            end
-            group.expenses[#group.expenses+1]=expense
-            if expense.level >= (goal.startLevel or ns.GetPlayerLevel()) and expense.level <= goal.targetLevel then
-                group.relevant[#group.relevant+1]=expense
-                local trainable=not expense.paid and expense.eligible~=false
-                if not group.expense or (trainable and not group.hasTrainable) then
-                    group.expense,group.requiredLevel=expense,expense.level
-                end
-                if trainable then
-                    group.hasTrainable,group.readOnly=true,false
-                    group.included=group.included or expense.selected
-                    if expense.copper then group.cost=group.cost+expense.copper else group.unknown=true end
-                end
-            end
-        end
-    end
-    table.sort(groups,function(a,b)
-        if not a.expense then return false end
-        if not b.expense then return true end
-        if a.requiredLevel~=b.requiredLevel then return a.requiredLevel<b.requiredLevel end
-        return a.expense.name<b.expense.name
-    end)
-    return groups
-end
-
 function ns.RefreshExpensePlanner()
-    local frame=ns.planningFrame
-    if not frame or not planningGoal then return end
-    ns.SyncExpenses(planningGoal)
-    frame.goalName:SetText("Goal: " .. (planningGoal.name~="" and planningGoal.name or "New goal"))
-    frame.expenseButtons=frame.expenseButtons or {}
-    for _,button in ipairs(frame.expenseButtons) do button:Hide() end
-    -- Native action-sized icons with an eight-pixel gutter: eight columns fit
-    -- the existing 356px content width without shrinking the click targets.
-    local columns, strideX, strideY=8,44,54
-    local visible,unknown=0,0
-    for _,group in ipairs(abilityGroups(planningGoal,frame.classMode)) do
-        if group.expense then
-            visible=visible+1
-            local button=frame.expenseButtons[visible]
-            if not button then
-                button=CreateFrame("Button",nil,frame.content); button:SetSize(36,36)
-                -- A solid inset frame stays inside the button. Quickslot artwork
-                -- has oversized decorative corners that overlap this dense grid.
-                button.border=button:CreateTexture(nil,"BACKGROUND"); button.border:SetAllPoints()
-                button.icon=button:CreateTexture(nil,"ARTWORK")
-                button.icon:SetPoint("TOPLEFT",2,-2); button.icon:SetPoint("BOTTOMRIGHT",-2,2)
-                button.icon:SetTexCoord(0.07,0.93,0.07,0.93)
-                button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square","BLEND")
-                local highlight=button:GetHighlightTexture()
-                highlight:ClearAllPoints()
-                highlight:SetPoint("TOPLEFT",2,-2); highlight:SetPoint("BOTTOMRIGHT",-2,2)
-                highlight:SetColorTexture(1,1,1,0.12)
-                button.level=UI.Label(button,"",-2,-39,40,"GameFontDisableSmall")
-                button.level:SetJustifyH("CENTER"); button.level:SetWordWrap(false)
-                button:SetScript("OnClick",function(self)
-                    if self.readOnly then return end
-                    local selected=not self.included
-                    for _,item in ipairs(self.expenses) do item.selected=selected end
-                    savePlannerChange()
-                    ns.RefreshExpensePlanner(); showExpenseTooltip(self)
-                end)
-                button:SetScript("OnEnter",showExpenseTooltip)
-                button:SetScript("OnLeave",function() GameTooltip:Hide() end)
-                frame.expenseButtons[visible]=button
-            end
-            button.expense,button.expenses=group.expense,group.expenses
-            button.readOnly,button.included=group.readOnly,group.included
-            button.cost,button.unknown,button.requiredLevel=group.cost,group.unknown,group.requiredLevel
-            button:ClearAllPoints()
-            button:SetPoint("TOPLEFT",6+((visible-1)%columns)*strideX,-math.floor((visible-1)/columns)*strideY-2)
-            button.icon:SetTexture(ns.ExpenseIcon(group.expense))
-            local included=group.included and not group.readOnly
-            button.icon:SetDesaturated(not included)
-            local tint=included and 1 or 0.5
-            button.icon:SetVertexColor(tint,tint,tint)
-            button.border:SetColorTexture(included and 0.72 or 0.3,included and 0.55 or 0.3,included and 0.24 or 0.3,1)
-            button.level:SetText("Lv " .. group.requiredLevel)
-            button:Show()
-            if included and group.unknown then unknown=unknown+1 end
+    local page=ns.planningFrame
+    if not page or not page.goal or not ns.ui or ns.ui.currentPage~=page.key then return end
+    ns.SyncExpenses(page.goal)
+    page.goalName:SetText("Goal: " .. (page.goal.name~="" and page.goal.name or "New goal"))
+    local training,complete=ns.TrainingRunway(page.goal)
+    page.summary:SetText("Goal target " .. ns.MoneyText(page.goal.targetCopper) .. "\nNext two levels' training " .. ns.MoneyText(training)
+        .. (not complete and " - some prices unknown" or ""))
+    local className=UnitClass("player")
+    page.hint:SetText(page.classMode and ((className or "Class") .. " - level " .. ns.GetPlayerLevel() .. " - next upgrades") or "Click icons to include or exclude purchases.")
+    page.expenseButtons=page.expenseButtons or {}; for _,button in ipairs(page.expenseButtons) do button:Hide() end
+    local groups=ns.AbilityGroups(page.goal,page.classMode)
+    for index,group in ipairs(groups) do
+        local button=page.expenseButtons[index]
+        if not button then
+            button=CreateFrame("Button",nil,page.content); button:SetSize(36,36); button.page=page
+            button.border=button:CreateTexture(nil,"BACKGROUND"); button.border:SetAllPoints()
+            button.icon=button:CreateTexture(nil,"ARTWORK"); button.icon:SetPoint("TOPLEFT",2,-2); button.icon:SetPoint("BOTTOMRIGHT",-2,2)
+            button.icon:SetTexCoord(0.07,0.93,0.07,0.93)
+            button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square","BLEND")
+            local glow=button:GetHighlightTexture(); glow:ClearAllPoints(); glow:SetPoint("TOPLEFT",2,-2); glow:SetPoint("BOTTOMRIGHT",-2,2); glow:SetColorTexture(1,1,1,0.12)
+            button.level=UI.Label(button,"",-2,-39,40,"GameFontDisableSmall"); button.level:SetJustifyH("CENTER")
+            button:SetScript("OnClick",function(self)
+                if self.readOnly then return end
+                local selected=not self.included
+                for _,item in ipairs(self.expenses) do item.selected=selected end
+                changed(page); ns.RefreshExpensePlanner(); showTooltip(self)
+            end)
+            button:SetScript("OnEnter",showTooltip); button:SetScript("OnLeave",function() GameTooltip:Hide() end)
+            page.expenseButtons[index]=button
         end
+        button.unknown,button.ready=group.unknown,group.ready
+        for field,value in pairs(group) do button[field]=value end
+        button:ClearAllPoints(); button:SetPoint("TOPLEFT",6+((index-1)%8)*44,-math.floor((index-1)/8)*54-2)
+        button.icon:SetTexture(ns.ExpenseIcon(group.expense))
+        local included=group.included and not group.readOnly
+        button.icon:SetDesaturated(not included); local tint=included and 1 or 0.5; button.icon:SetVertexColor(tint,tint,tint)
+        button.border:SetColorTexture(included and 0.72 or 0.3,included and 0.55 or 0.3,included and 0.24 or 0.3,1)
+        button.level:SetText(group.ready and "Now" or "Lv " .. group.requiredLevel); button:Show()
     end
-    frame.content:SetHeight(math.max(1,math.ceil(visible/columns)*strideY))
-    local training,complete=ns.TrainingRunway(planningGoal)
-    frame.summary:SetText("Goal target " .. ns.MoneyText(planningGoal.targetCopper)
-        .. "\nNext two levels' training " .. ns.MoneyText(training)
-        .. ((unknown>0 or not complete) and " - some prices unknown" or ""))
-end
-
-function ns.OpenExpensePlanner(goal,onApply,classOnly)
-    if not ns.planningFrame then
-        local frame=UI.Window("GoldEnvelopeExpensePlanner",420,520,"Choose goal expenses"); ns.planningFrame=frame
-        frame:SetFrameLevel(2100)
-        local surface=frame:CreateTexture(nil,"BACKGROUND",nil,-8)
-        surface:SetPoint("TOPLEFT",5,-5); surface:SetPoint("BOTTOMRIGHT",-5,5)
-        surface:SetColorTexture(0.055,0.04,0.025,1)
-        frame.goalName=UI.Label(frame,"",16,-56,388)
-        frame.goalName:SetWordWrap(false); frame.goalName:SetHeight(20)
-        frame.summary=UI.Label(frame,"",16,-85,388,"GameFontHighlightSmall")
-        UI.Label(frame,"Click icons to toggle. Hover for details.",16,-121,388,"GameFontDisableSmall")
-        frame.scroll=CreateFrame("ScrollFrame",nil,frame,"UIPanelScrollFrameTemplate")
-        frame.scroll:SetPoint("TOPLEFT",16,-142); frame.scroll:SetSize(368,200)
-        frame.content=CreateFrame("Frame",nil,frame.scroll); frame.content:SetSize(356,1); frame.scroll:SetScrollChild(frame.content)
-        frame.manual=CreateFrame("Frame",nil,frame); frame.manual:SetAllPoints()
-        UI.Label(frame.manual,"Add or update a manual cost",16,-354,388,"GameFontNormalSmall")
-        frame.expenseName=UI.Edit(frame.manual,22,-380,240,"")
-        frame.expenseLevel=UI.Edit(frame.manual,310,-380,62,"",true)
-        UI.Label(frame.manual,"Level",310,-363,62,"GameFontNormalSmall")
-        frame.expenseAmount=UI.Coins(frame.manual,22,-414)
-        local function saveManualCost()
-            if not planningGoal or frame.classMode then return end
-            local name=frame.expenseName:GetText():match("^%s*(.-)%s*$")
-            local level=tonumber(frame.expenseLevel:GetText())
-            local copper,errorText=UI.GetCoins(frame.expenseAmount)
-            if not name:match("%S") then return end
-            if not level or level~=math.floor(level) or level<(planningGoal.startLevel or 1) or level>planningGoal.targetLevel then
-                frame.error:SetText("Use a level within this goal's start and target."); return
-            end
-            if not copper then frame.error:SetText(errorText); return end
-            for _,item in ipairs(planningGoal.expenses) do
-                if item.source=="manual" and (item.key==manualKey or (not manualKey and item.name==name and item.level==level)) then
-                    manualKey=item.key
-                    item.name,item.level,item.copper,item.estimated=name,level,copper,false
-                    savePlannerChange(); ns.RefreshExpensePlanner(); frame.error:SetText("Saved automatically."); return
-                end
-            end
-            planningGoal.nextExpenseID=(planningGoal.nextExpenseID or 0)+1
-            manualKey="manual:" .. planningGoal.nextExpenseID
-            planningGoal.expenses[#planningGoal.expenses+1]={key=manualKey,name=name,
-                level=level,copper=copper,selected=true,source="manual"}
-            savePlannerChange(); ns.RefreshExpensePlanner(); frame.error:SetText("Saved automatically.")
-        end
-        for _,field in ipairs({frame.expenseName,frame.expenseLevel,unpack(frame.expenseAmount)}) do
-            field:SetScript("OnEditFocusLost",saveManualCost)
-        end
-        UI.Button(frame.manual,"New cost",236,-414,140,function()
-            saveManualCost()
-            manualKey=nil
-            frame.expenseName:SetText(""); frame.expenseLevel:SetText(tostring(planningGoal.targetLevel))
-            UI.SetCoins(frame.expenseAmount,0); frame.error:SetText("")
-            frame.expenseName:SetFocus()
-        end)
-        frame.error=UI.Label(frame,"",16,-453,388,"GameFontHighlightSmall")
-        UI.Label(frame,"Changes save automatically.",16,-488,200,"GameFontDisableSmall")
-        UI.Button(frame,"Close",274,-481,130,function()
-            saveManualCost(); frame:Hide()
-        end)
-        frame:SetScript("OnHide",function()
-            saveManualCost(); planningGoal,applyPlanning=nil,nil; manualKey=nil; GameTooltip:Hide()
-        end)
+    local rows=math.ceil(#groups/8); page.content:SetHeight(math.max(1,rows*54))
+    page.empty:SetText(#groups==0 and (page.classMode and "No upcoming training at this level." or "Add a purchase below to get started.") or "")
+    if page.classMode then
+        local grid=math.min(260,math.max(42,rows*54)); page.scroll:SetHeight(grid)
+        ns.ResizePage(math.max(230,55+84+grid+46))
+    else
+        local grid=math.min(124,math.max(42,rows*54)); page.scroll:SetHeight(grid)
+        page.manual:ClearAllPoints(); page.manual:SetPoint("TOPLEFT",0,-(84+grid+14))
+        ns.ResizePage(55+84+grid+14+82+46)
     end
-    planningGoal,applyPlanning=Model.CopyGoal(goal),onApply
-    manualKey=nil
-    local frame=ns.planningFrame
-    frame.classMode=classOnly and true or false
-    if frame.classMode then
-        planningGoal.includeClassTraining=true
-        savePlannerChange()
+end
+local function storeManualDraft(page)
+    local pending={index=ns.ui.selectedGoalIndex,name=page.goal.name,expenseName=page.expenseName:GetText(),level=page.expenseLevel:GetText(),coins={},key=page.manualKey}
+    for i,field in ipairs(page.expenseAmount) do pending.coins[i]=field:GetText() end
+    if ns.testMoneyCopper~=nil then ns.testExpenseDraft=pending else ns.db.expenseDraft=pending end
+end
+local function saveManual(page)
+    if not page.goal or page.classMode then return end
+    local name=page.expenseName:GetText():match("^%s*(.-)%s*$"); if name=="" then return end
+    local level=tonumber(page.expenseLevel:GetText()); local amount,err=UI.GetCoins(page.expenseAmount)
+    if not level or level~=math.floor(level) or level<1 or level>page.goal.targetLevel then err="Use a valid due level within this goal." end
+    if err then storeManualDraft(page); ns.ui.error:SetText(err); return end
+    local found
+    for _,item in ipairs(page.goal.expenses) do
+        if item.source=="manual" and (item.key==page.manualKey or (not page.manualKey and item.name==name and item.level==level)) then found=item; break end
     end
-    frame.title:SetText(frame.classMode and "Choose training abilities" or "Choose goal expenses")
-    frame.manual:SetShown(not frame.classMode)
-    frame.scroll:SetSize(368,frame.classMode and 300 or 200)
-    ns.planningFrame.expenseName:SetText(""); ns.planningFrame.expenseLevel:SetText(tostring(goal.targetLevel))
-    UI.SetCoins(ns.planningFrame.expenseAmount,0); ns.planningFrame.error:SetText("")
-    ns.planningFrame.scroll:SetVerticalScroll(0); ns.RefreshExpensePlanner(); ns.planningFrame:Show()
+    if not found then
+        page.goal.nextExpenseID=(page.goal.nextExpenseID or 0)+1
+        found={key="manual:" .. page.goal.nextExpenseID,source="manual",selected=true}; page.goal.expenses[#page.goal.expenses+1]=found
+    end
+    page.manualKey=found.key; found.name,found.level,found.copper,found.estimated=name,level,amount,false
+    changed(page)
+    if ns.testMoneyCopper~=nil then ns.testExpenseDraft=nil else ns.db.expenseDraft=nil end
+    ns.ui.error:SetText(""); ns.RefreshExpensePlanner()
 end
-
-function ns.OpenTrainingPlanner(goal,onApply)
-    ns.OpenExpensePlanner(goal,onApply,true)
+function ns.FlushExpenseFields()
+    local page=ns.planningFrame
+    if page and ns.ui and ns.ui.currentPage==page.key then saveManual(page) end
 end
-
+function ns.OpenExpensePlanner(goal,onChange,classOnly)
+    ns.EnsureUI(); ns.planningFrames=ns.planningFrames or {}
+    local key=classOnly and "training" or "expenses"; local page=ns.planningFrames[key]
+    if not page then
+        page=UI.CreatePage(key,classOnly and "Class training" or "Goal expenses",classOnly and 450 or 405); ns.planningFrames[key]=page
+        page.key,page.classMode=key,classOnly and true or false
+        page.goalName=UI.Label(page,"",0,0,368); page.goalName:SetWordWrap(false)
+        page.summary=UI.Label(page,"",0,-24,368,"GameFontHighlightSmall")
+        page.hint=UI.Label(page,"",0,-59,368,"GameFontDisableSmall")
+        page.scroll=CreateFrame("ScrollFrame",nil,page,"UIPanelScrollFrameTemplate"); page.scroll:SetPoint("TOPLEFT",0,-84); page.scroll:SetSize(354,classOnly and 260 or 124)
+        page.content=CreateFrame("Frame",nil,page.scroll); page.content:SetSize(352,1); page.scroll:SetScrollChild(page.content)
+        page.empty=UI.Label(page.content,"",0,-4,350,"GameFontHighlightSmall")
+        page.manual=CreateFrame("Frame",nil,page); page.manual:SetSize(368,82)
+        UI.Label(page.manual,"Add or update a purchase",0,0,268,"GameFontNormalSmall")
+        page.expenseName=UI.Edit(page.manual,6,-22,226,""); page.expenseLevel=UI.Edit(page.manual,290,-22,64,"",true)
+        UI.Label(page.manual,"Due level",290,-6,64,"GameFontNormalSmall")
+        page.expenseAmount=UI.Coins(page.manual,6,-58)
+        UI.Button(page.manual,"New cost",226,-58,128,function()
+            saveManual(page); page.manualKey=nil; page.expenseName:SetText(""); UI.SetCoins(page.expenseAmount,0)
+        end)
+        for _,field in ipairs({page.expenseName,page.expenseLevel,unpack(page.expenseAmount)}) do field:SetScript("OnEditFocusLost",function() saveManual(page) end) end
+        page.manual:SetShown(not classOnly)
+        page:SetScript("OnHide",function() saveManual(page); GameTooltip:Hide() end)
+        page:SetScript("OnShow",function() ns.planningFrame=page; ns.RefreshExpensePlanner() end)
+    end
+    page.goal,page.onChange=Model.CopyGoal(goal),onChange; page.manualKey=nil; ns.planningFrame=page
+    if classOnly then page.goal.includeClassTraining=true; changed(page) end
+    page.expenseName:SetText(""); page.expenseLevel:SetText(tostring(goal.targetLevel)); UI.SetCoins(page.expenseAmount,0)
+    local pending=ns.testMoneyCopper~=nil and ns.testExpenseDraft or ns.db.expenseDraft
+    if pending and pending.index==ns.ui.selectedGoalIndex and pending.name==goal.name then
+        page.expenseName:SetText(pending.expenseName); page.expenseLevel:SetText(pending.level); page.manualKey=pending.key
+        for i,field in ipairs(page.expenseAmount) do field:SetText(pending.coins[i]) end
+    end
+    page.scroll:SetVerticalScroll(0)
+    ns.ShowPage(key,ns.ui.currentPage=="planning"); ns.RefreshExpensePlanner()
+end
+function ns.OpenTrainingPlanner(goal,onChange) ns.OpenExpensePlanner(goal,onChange,true) end
 function ns.UpdateOpenPlannerGoal(goal)
-    if not planningGoal then return end
-    planningGoal=Model.CopyGoal(goal)
-    ns.RefreshExpensePlanner()
+    local page=ns.planningFrame
+    if not page or not page.goal or not ns.ui or ns.ui.currentPage~=page.key then return end
+    page.goal=Model.CopyGoal(goal); ns.RefreshExpensePlanner()
 end
