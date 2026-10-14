@@ -1,6 +1,37 @@
 local _, ns = ...
 local Model = ns.Model
 
+local function validSpellID(value)
+    return type(value) == "number" and value > 0 and value < math.huge and value == math.floor(value)
+end
+
+function ns.ExpenseIcon(expense)
+    local icon
+    if validSpellID(expense.spellID) and C_Spell and C_Spell.GetSpellTexture then
+        icon = C_Spell.GetSpellTexture(expense.spellID)
+    end
+    return icon or expense.icon or "Interface\\Icons\\INV_Misc_QuestionMark"
+end
+
+-- Only a service's own link or typed tooltip can identify its exact spell rank.
+-- A name lookup can return a different rank, especially for profession training.
+local function trainerSpellID(index)
+    local link
+    if GetTrainerServiceItemLink then
+        link = GetTrainerServiceItemLink(index)
+        if type(link) == "string" and link ~= "" then
+            local id = tonumber(link:match("|Hspell:(%d+)") or link:match("^spell:(%d+)"))
+            if validSpellID(id) then return id, link end
+        else link = nil end
+    end
+    if C_TooltipInfo and C_TooltipInfo.GetTrainerService and Enum and Enum.TooltipDataType
+        and Enum.TooltipDataType.Spell ~= nil then
+        local data = C_TooltipInfo.GetTrainerService(index)
+        if data and data.type == Enum.TooltipDataType.Spell and validSpellID(data.id) then return data.id, link end
+    end
+    return nil, link
+end
+
 local function sourceFor(name)
     if C_Spell and C_Spell.GetSpellName then
         if name == C_Spell.GetSpellName(33388) then return "mount-first" end
@@ -36,14 +67,16 @@ function ns.ClassCatalog()
         end
         for key, quote in pairs(ns.db.trainerCatalog or {}) do
             if quote.source == "class" and quote.class == class
-                and (quote.spellID == base.spellID or (quote.name == entry.name and quote.level == base.level
+                and (quote.spellID == base.spellID or (not quote.spellID and quote.name == entry.name and quote.level == base.level
                     and (quote.rank == base.rank or not quote.rank or quote.rank == ""))) then
                 entry.copper, entry.paid, entry.priceSource = quote.copper, quote.paid or entry.paid, "trainer quote"
                 entry.observedAt, entry.trainer = quote.observedAt, quote.trainer
+                entry.icon, entry.link = quote.icon, quote.link
                 matched[key] = true
                 break
             end
         end
+        entry.icon = ns.ExpenseIcon(entry)
         rows[#rows + 1] = entry
     end
     for key, quote in pairs(ns.db.trainerCatalog or {}) do
@@ -51,6 +84,7 @@ function ns.ClassCatalog()
             local entry = {}
             for field, value in pairs(quote) do entry[field] = value end
             entry.key, entry.eligible, entry.priceSource = key, true, "trainer quote"
+            entry.icon = ns.ExpenseIcon(entry)
             rows[#rows + 1] = entry
         end
     end
@@ -72,19 +106,21 @@ function ns.TrainingByLevel(goal)
     return totals, unknown
 end
 
-function ns.TrainingRunway(goal, force)
-    local level = UnitLevel("player")
+-- An optional roster merges its active training choices with a staged goal.
+-- This keeps an initial allocation from taking another goal's training money.
+function ns.TrainingRunway(goal, force, goals, levelOverride)
+    local level = levelOverride or UnitLevel("player")
     local enabled, selected = force or (goal and goal.includeClassTraining), {}
-    if not goal then
-        for _, g in ipairs(ns.db.goals) do
-            if g.active and g.includeClassTraining then enabled = true
-                for _, e in ipairs(g.expenses or {}) do
-                    if e.source == "class" then selected[e.key] = selected[e.key] or e.selected or false end
-                end
+    local function addSelections(g)
+        for _, e in ipairs(g.expenses or {}) do
+            if e.source == "class" then
+                selected[e.key] = selected[e.key] or e.selected ~= false
             end
         end
-    else
-        for _, e in ipairs(goal.expenses or {}) do if e.source == "class" then selected[e.key] = e.selected end end
+    end
+    if goal then addSelections(goal) end
+    for _, g in ipairs(goals or (not goal and ns.db.goals) or {}) do
+        if g.active and g.includeClassTraining then enabled = true; addSelections(g) end
     end
     if not enabled then return 0, true end
     local amount, complete = 0, true
@@ -103,10 +139,15 @@ function ns.SyncExpenses(goal)
     local source = goal.presetID == "class-training" and "class"
         or goal.presetID == "profession-training" and "profession" or goal.presetID
     local existing = {}
+    local abilitySelections = {}
     local provisionalSelection
     goal.expenses = goal.expenses or {}
     for _, expense in ipairs(goal.expenses) do
         existing[expense.key] = expense
+        if expense.source=="class" or expense.source=="profession" then
+            local ability=expense.source .. ":" .. expense.name
+            abilitySelections[ability]=abilitySelections[ability] or expense.selected~=false
+        end
         if expense.estimated then provisionalSelection = expense.selected end
     end
     local quotes = {}
@@ -127,7 +168,11 @@ function ns.SyncExpenses(goal)
         if quote.source == source or (goal.includeClassTraining and quote.source == "class") then
             local expense = existing[key]
             if not expense then
-                expense = { key = key, selected = provisionalSelection ~= false }
+                local selected=provisionalSelection~=false
+                if quote.source=="class" or quote.source=="profession" then
+                    selected=abilitySelections[quote.source .. ":" .. quote.name]~=false
+                end
+                expense = { key = key, selected = selected }
                 goal.expenses[#goal.expenses + 1] = expense
                 existing[key] = expense
             end
@@ -159,8 +204,12 @@ function ns.EnableItemPlanning(goal)
     goal.planMode, goal.planDecision = "items", "items"
     if goal.presetID == "class-training" then goal.includeClassTraining = true end
     goal.expenses = goal.expenses or {}
-    if #goal.expenses == 0 and goal.targetCopper > 0 and goal.presetID ~= "class-training" then
-        goal.expenses[1] = { key = "manual:initial", name = goal.name ~= "" and goal.name or "Goal expense",
+    local hasGoalExpense = false
+    for _, expense in ipairs(goal.expenses) do
+        if expense.source ~= "class" then hasGoalExpense = true; break end
+    end
+    if not hasGoalExpense and goal.targetCopper > 0 and goal.presetID ~= "class-training" then
+        goal.expenses[#goal.expenses + 1] = { key = "manual:initial", name = goal.name ~= "" and goal.name or "Goal expense",
             level = goal.targetLevel, copper = goal.targetCopper, selected = true,
             estimated = goal.presetID == "mount-first" or goal.presetID == "mount-epic", source = "manual" }
     end
@@ -185,10 +234,13 @@ function ns.CaptureTrainerPrices()
             if level <= Model.MAX_LEVEL then
                 local key = table.concat({ source, class or "UNKNOWN", name, rank or "", tostring(level) }, ":")
                 local previous = ns.db.trainerCatalog[key]
+                local spellID, link = trainerSpellID(index)
+                spellID = spellID or (previous and previous.spellID)
+                link = link or (previous and previous.link)
                 if type(cost) ~= "number" or cost < 0 or cost > Model.MAX_COPPER or cost ~= math.floor(cost) then cost = nil end
                 if serviceType == "used" and previous then cost = previous.copper end
                 ns.db.trainerCatalog[key] = { key = key, source = source, class = class, name = name,
-                    rank = rank, level = level, copper = cost, paid = serviceType == "used", icon = icon,
+                    rank = rank, level = level, copper = cost, paid = serviceType == "used", icon = icon, spellID = spellID, link = link,
                     trainer = UnitName and UnitName("npc") or "Trainer", observedAt = time and time() or 0 }
             end
         end

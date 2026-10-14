@@ -29,5 +29,5 @@ function ns.NewPresetGoal(id)
     if not preset then return nil end
     return { name = preset.name, presetID = preset.id, targetLevel = preset.targetLevel,
         targetCopper = preset.targetCopper, curve = 0, active = true, milestones = {}, expenses = {},
-        includeClassTraining = id == "class-training", initialPercent = 20 }
+        includeClassTraining = true, initialPercent = 20 }
 end

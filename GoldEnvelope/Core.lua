@@ -19,15 +19,63 @@ function ns.GetBudget()
     return budget
 end
 
+-- Copy just the display values so an open toast never changes its goal data.
+function ns.BuildLevelUpSummary(level)
+    if not ns.db then return nil end
+    if type(level) ~= "number" or level ~= math.floor(level) or level < 1
+        or level > ns.Model.MAX_LEVEL then return nil end
+    local balance = GetMoney()
+    local goals={}
+    for index,goal in ipairs(ns.db.goals) do goals[index]=ns.Model.CopyGoal(goal) end
+    ns.Model.Reconcile(goals, balance)
+    local ordered = {}
+    for index, goal in ipairs(goals) do
+        if goal.active then ordered[#ordered + 1] = { goal = goal, index = index } end
+    end
+    if #ordered == 0 then return nil end
+    table.sort(ordered, function(a, b)
+        if a.goal.targetLevel ~= b.goal.targetLevel then return a.goal.targetLevel < b.goal.targetLevel end
+        return a.index < b.index
+    end)
+    local training, trainingComplete = ns.TrainingRunway(nil, nil, nil, level)
+    local budget = ns.Model.Budget(goals, level, balance, training)
+    local summary = { level = level, balance = balance, goals = {}, activeCount = #ordered,
+        remainingCount = math.max(0, #ordered - 2) }
+    for index = 1, math.min(2, #ordered) do
+        local goal = ordered[index].goal
+        local progress = ns.Model.GoalProgress(goal, level)
+        local preset = ns.FindPreset and ns.FindPreset(goal.presetID)
+        local row = { name = goal.name, targetLevel = goal.targetLevel,
+            icon = goal.icon or (preset and preset.icon) or "Interface\\Icons\\INV_Misc_Coin_01",
+            saved = progress.saved, target = progress.target, expected = progress.expected,
+            percent = progress.percent, ahead = progress.ahead, behind = progress.behind }
+        if goal.targetCopper == 0 and goal.includeClassTraining then
+            row.training, row.trainingComplete = true, trainingComplete
+            row.saved, row.target, row.expected = budget.trainingFunded, budget.trainingDue, budget.trainingDue
+            row.percent = row.target > 0 and row.saved / row.target * 100 or 100
+            row.ahead, row.behind = 0, budget.trainingShortfall
+        end
+        if row.target > 0 and row.saved >= row.target and not row.training then row.status = "complete"
+        elseif row.behind > 0 then row.status = "behind"
+        elseif row.ahead > 0 then row.status = "ahead"
+        else row.status = "ontrack" end
+        summary.goals[#summary.goals + 1] = row
+    end
+    return summary
+end
+
 function ns.PrepareGoal(goal, replacing)
     if not goal.startLevel then goal.startLevel = math.max(1, UnitLevel("player")) end
     ns.SyncExpenses(goal)
     if goal.savedCopper == nil then
-        local allocated = 0
+        local allocated, trainingGoals = 0, {}
         for _, existing in ipairs(ns.db.goals) do
-            if existing ~= replacing and existing.active then allocated = allocated + (existing.savedCopper or 0) end
+            if existing ~= replacing and existing.active then
+                allocated = allocated + (existing.savedCopper or 0)
+                trainingGoals[#trainingGoals + 1] = existing
+            end
         end
-        local training, complete = ns.TrainingRunway(goal, true)
+        local training, complete = ns.TrainingRunway(goal, true, trainingGoals)
         goal.initialCopper = complete and ns.Model.InitialInvestment(GetMoney(), training, allocated,
             goal.initialPercent, goal.initialOverrideCopper, goal.targetCopper) or 0
         goal.savedCopper = goal.initialCopper
@@ -119,6 +167,7 @@ local function StartSession()
     if ns.sessionStarted then return end
     ns.sessionStarted = true
     ns.lastMoney = GetMoney()
+    ns.lastLevelUpEvent = UnitLevel("player")
     for _, goal in ipairs(ns.db.goals) do
         if not goal.startLevel then
             if goal.curve == 2 then goal.curve = 0 end
@@ -137,6 +186,7 @@ local function Initialize()
     GoldEnvelopeDB = type(GoldEnvelopeDB) == "table" and GoldEnvelopeDB or {}
     ns.db = GoldEnvelopeDB
     if ns.db.warnings == nil then ns.db.warnings = true end
+    if ns.db.levelUpToasts == nil then ns.db.levelUpToasts = true end
     ns.db.goals = type(ns.db.goals) == "table" and ns.db.goals or {}
     local valid = {}
     for _, goal in ipairs(ns.db.goals) do
@@ -167,11 +217,20 @@ frame:SetScript("OnEvent", function(_, event, arg)
     end
     if event == "PLAYER_LEVEL_UP" then
         -- The event can precede UnitLevel updating.
-        C_Timer.After(0, function() ns.Changed() end)
+        local level = tonumber(arg)
+        if level and level == math.floor(level) and level >= 1 and level <= ns.Model.MAX_LEVEL
+            and level > (ns.lastLevelUpEvent or 0) then
+            ns.lastLevelUpEvent = level
+            C_Timer.After(0, function()
+                ns.Changed()
+                if ns.db.levelUpToasts and ns.QueueLevelUpToast then ns.QueueLevelUpToast(level) end
+            end)
+        end
     elseif event == "PLAYER_MONEY" then
         C_Timer.After(0, function() ns.ObserveMoney() end)
     else
         if ns.InstallGuards then ns.InstallGuards() end
+        if event == "PLAYER_REGEN_ENABLED" and ns.FlushLevelUpToast then ns.FlushLevelUpToast() end
     end
 end)
 
@@ -200,6 +259,14 @@ SlashCmdList.GOLDENVELOPE = function(message)
         end
         if budget.trainingDue > 0 then ns.Print("Next two levels' training: " .. ns.Model.FormatCoins(budget.trainingDue)
             .. "; funded: " .. ns.Model.FormatCoins(budget.trainingFunded)) end
+    elseif message:match("^%s*testtoast%s*$") then
+        -- Temporary preview command while checking the toast in-game.
+        if ns.TestLevelUpToast then ns.TestLevelUpToast() end
+        ns.Print("Preview only; your goals and money are unchanged.")
+    elseif message:match("^%s*toasts%s*$") then
+        ns.db.levelUpToasts = not ns.db.levelUpToasts
+        if not ns.db.levelUpToasts and ns.HideLevelUpToast then ns.HideLevelUpToast() end
+        ns.Print("Level-up goal updates " .. (ns.db.levelUpToasts and "enabled." or "disabled."))
     else
         ns.ToggleUI()
     end

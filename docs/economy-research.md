@@ -1,6 +1,7 @@
 # Economy research and budgeting assumptions
 
-Research date: October 14, 2026. Implemented in version 0.3.0.
+Research date: October 14, 2026. Economy model introduced in version 0.3.0;
+UI and selection notes updated for version 0.3.2.
 
 ## What can be supported by the evidence
 
@@ -87,21 +88,21 @@ describes changes affecting vendor discounts.
 Known spells and race-ineligible entries are excluded. Later ranks whose first
 rank comes from a talent or quest require that first rank to be known. This is
 an eligibility approximation, not a complete recreation of all server-specific
-trainer prerequisites. Unchecked ranks remain excluded. Observed unpaid overdue
+trainer prerequisites. An ability icon controls all its ranks; exclusions persist when new ranks are observed. Observed unpaid overdue
 training remains in the current training budget; unobserved historical ranks are
 not automatically charged to a newly created goal.
 
 ## Initial investment and training coexistence
 
-The initial investment defaults to 20% of the current wallet. It cannot exceed
+The automatic background investment defaults to 20% of the current wallet. It cannot exceed
 the goal, unallocated cash, or cash remaining after current training and the next
-two levels. A manual override obeys the same limits. Insufficient training cash
+two levels. The editor no longer exposes percentage or override fields. Insufficient training cash
 or an unknown relevant price forces the investment to zero.
 
 For a level-25 warrior, the snapshot lists three level-26 purchases at 1g each:
 Challenging Shout, Charge rank 2, and Mocking Blow rank 2. Assuming these remain
 unlearned and selected, that is 3g of base-price training. With a wallet of
-4g 87s 5c, a 20% initial investment is 97s 41c. An override could use at most
+4g 87s 5c, a 20% initial investment is 97s 41c. The safety cap is
 1g 87s 5c, less any existing goal allocations. With only 2g, the investment is
 zero. Observed discounted prices change this calculation.
 
@@ -120,7 +121,7 @@ Paused allocations are released. Old planned reserves migrate without being
 credited as historical income.
 
 The native [Forever TradeFrame XML](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_UIPanels_Game/Mainline/TradeFrame.xml)
-specifies 344 × 446 UI units. Gold Envelope's main frame now uses 400 × 500,
+specifies 344 × 446 UI units. Gold Envelope's main frame now uses 400 × 450,
 with a separate goal-list flyout and expense chooser. Automated tests check
 dimensions and interactions; visual fit and real game API behavior still need
 client validation.
