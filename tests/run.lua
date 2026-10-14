@@ -18,6 +18,7 @@ local function goal(overrides)
     return result
 end
 loadAddon("Model.lua")
+loadAddon("Presets.lua")
 local Model = ns.Model
 
 test("copper precision and input validation", function()
@@ -99,6 +100,7 @@ GetMoney = function() return money end
 C_Timer = { After = function(_, callback) callback() end }
 SlashCmdList = {}
 loadAddon("Core.lua")
+loadAddon("Training.lua")
 ns.db = { goals = { goal() }, warnings = true }
 ns.ShowWarning = function() warnings = warnings + 1 end
 local currentAction
@@ -306,7 +308,13 @@ local function uiControl(parent)
         if wasShown and self.scripts.OnHide then self.scripts.OnHide(self) end
     end
     function methods:CreateFontString() return uiControl(self) end
-    setmetatable(result, { __index = function(_, key) return methods[key] or function() end end })
+    function methods:CreateTexture() return uiControl(self) end
+    function methods:GetNormalTexture() return uiControl(self) end
+    function methods:GetFrameLevel() return 1 end
+    setmetatable(result, { __index = function(_, key)
+        if methods[key] then return methods[key] end
+        if key:match("^%u") then return function() end end
+    end })
     uiControls[#uiControls + 1] = result
     return result
 end
@@ -322,6 +330,7 @@ local function click(parent, text)
     error("Missing button " .. text)
 end
 loadAddon("UI.lua")
+loadAddon("PlanningUI.lua")
 test("editor saves a custom goal and checkpoint into the actual budget", function()
     reset(); ns.db.goals = {}
     ns.ToggleUI()
@@ -335,11 +344,13 @@ test("editor saves a custom goal and checkpoint into the actual budget", functio
     ns.ui.milestoneAmount[1]:SetText("2")
     ns.ui.milestoneAmount[2]:SetText("50")
     ns.ui.milestoneAmount[3]:SetText("0")
-    click(ns.ui, "Set"); click(ns.ui, "Save goal")
+    click(ns.ui.editor, "Set"); click(ns.ui.editor, "Save goal")
+    assert(ns.planningConsent:IsShown()); equal(#ns.db.goals, 0)
+    click(ns.planningConsent, "Keep simple budget")
     equal(#ns.db.goals, 1); equal(ns.db.goals[1].name, "My savings")
     equal(ns.db.goals[1].milestones[11], 25000)
     equal(ns.GetBudget().reserved, 25000)
-    ns.ui.active:SetChecked(false); click(ns.ui, "Save goal")
+    ns.ui.active:SetChecked(false); click(ns.ui.editor, "Save goal")
     equal(ns.GetBudget().reserved, 0)
 end)
 test("actual warning buttons cancel or authorize a single purchase", function()
@@ -348,5 +359,210 @@ test("actual warning buttons cancel or authorize a single purchase", function()
     click(ns.warningFrame, "Cancel"); equal(executions, 0); equal(ns.pending, nil)
     ns.RequestPurchase(read, execute); click(ns.warningFrame, "Spend anyway")
     equal(executions, 1); equal(ns.pending, nil)
+end)
+
+test("mount presets are editable, opt-in and do not create duplicate goals", function()
+    reset(); ns.db.goals = {}
+    ns.UsePreset("mount-first")
+    equal(#ns.db.goals, 0); equal(ns.ui.name:GetText(), "First mount & riding")
+    equal(ns.ui.level:GetText(), "40"); equal(ns.ui.amount[1]:GetText(), "100")
+    ns.ui.amount[1]:SetText("90")
+    click(ns.ui.editor, "Save goal"); click(ns.planningConsent, "Keep simple budget")
+    equal(#ns.db.goals, 1); equal(ns.db.goals[1].targetCopper, 900000)
+    ns.UsePreset("mount-first"); click(ns.ui.editor, "Save goal")
+    equal(#ns.db.goals, 1)
+    ns.UsePreset("mount-epic")
+    equal(ns.ui.level:GetText(), "60"); equal(ns.ui.amount[1]:GetText(), "1000")
+    equal(#ns.db.goals, 1)
+end)
+
+test("coin artwork and aligned plan columns use the actual amounts", function()
+    ns.UsePreset("mount-first")
+    local text = ns.MoneyText(10203)
+    assert(text:find("1 |TInterface\\MoneyFrame\\UI%-GoldIcon"))
+    assert(text:find("2 |TInterface\\MoneyFrame\\UI%-SilverIcon"))
+    assert(text:find("3 |TInterface\\MoneyFrame\\UI%-CopperIcon"))
+    equal(#ns.ui.planRows, 60)
+    equal(ns.ui.planRows[40].reserve.text, ns.MoneyText(ns.db.goals[1].targetCopper))
+    assert(ns.ui.planRows[40].level.text:find("%*"))
+end)
+
+local services, playerClass, professionTrainer = {}, "WARRIOR", false
+UnitClass = function() return playerClass, playerClass end
+UnitName = function() return "Test trainer" end
+time = function() return 12345 end
+IsTradeskillTrainer = function() return professionTrainer end
+GetNumTrainerServices = function() return #services end
+GetTrainerServiceInfo = function(index)
+    local item = services[index]
+    if not item then return end
+    return item.name, item.status or "available", "icon", item.level, item.rank
+end
+GetTrainerServiceLevelReq = function(index) return services[index].level end
+GetTrainerServiceCost = function(index) return services[index].cost end
+C_Spell = { GetSpellName = function(id)
+    if id == 33388 then return "Apprentice Riding" elseif id == 33391 then return "Journeyman Riding" end
+end }
+
+test("actual trainer quotes retain ranks, levels, future costs and class identity", function()
+    for _, class in ipairs({ "WARRIOR", "MAGE", "PRIEST", "ROGUE", "HUNTER", "WARLOCK", "PALADIN", "SHAMAN", "DRUID" }) do
+        reset(); ns.db.trainerCatalog = {}; playerClass = class
+        services = { { name = "Ability", rank = "Rank 1", level = 4, cost = 100 },
+            { name = "Ability", rank = "Rank 2", level = 12, cost = 2000, status = "unavailable" } }
+        ns.CaptureTrainerPrices()
+        local g = ns.NewPresetGoal("class-training"); ns.EnableItemPlanning(g)
+        equal(#g.expenses, 2); equal(g.targetCopper, 2100)
+        equal(g.expenses[1].class, class); equal(g.expenses[1].rank, "Rank 1")
+        equal(g.expenses[2].level, 12); equal(g.expenses[2].copper, 2000)
+        assert(Model.ValidateGoal(g))
+    end
+    playerClass = "WARRIOR"
+end)
+
+test("unchecked ranks stay excluded across updated trainer quotes", function()
+    reset(); ns.db.trainerCatalog = {}
+    services = { { name = "Ability", rank = "Rank 1", level = 4, cost = 100 },
+        { name = "Ability", rank = "Rank 2", level = 12, cost = 2000 } }
+    ns.CaptureTrainerPrices()
+    local g = ns.NewPresetGoal("class-training"); ns.EnableItemPlanning(g)
+    g.expenses[2].selected = false; ns.SyncExpenses(g); ns.db.goals = { g }
+    equal(g.targetCopper, 100)
+    services[2].cost = 1800; ns.CaptureTrainerPrices()
+    equal(g.expenses[2].selected, false); equal(g.expenses[2].copper, 1800)
+    equal(g.targetCopper, 100); equal(#g.expenses, 2)
+end)
+
+test("learned ranks release their reserve without losing future ranks", function()
+    reset(); ns.db.trainerCatalog = {}
+    services = { { name = "Ability", rank = "Rank 1", level = 4, cost = 100 },
+        { name = "Ability", rank = "Rank 2", level = 12, cost = 2000, status = "unavailable" } }
+    ns.CaptureTrainerPrices()
+    local g = ns.NewPresetGoal("class-training"); ns.EnableItemPlanning(g); ns.db.goals = { g }
+    equal(g.targetCopper, 2100)
+    services[1].status, services[1].cost = "used", 0
+    ns.CaptureTrainerPrices()
+    equal(g.expenses[1].paid, true); equal(g.expenses[1].copper, 100)
+    equal(g.targetCopper, 2000)
+    equal(Model.TargetAtLevel(g, 12), 2000)
+end)
+
+test("filtered-out services are retained and never presumed learned", function()
+    reset(); ns.db.trainerCatalog = {}
+    services = { { name = "Spell A", level = 4, cost = 100 }, { name = "Spell B", level = 10, cost = 2000 } }
+    ns.CaptureTrainerPrices()
+    services = { services[1] }; ns.CaptureTrainerPrices()
+    local g = ns.NewPresetGoal("class-training"); ns.EnableItemPlanning(g)
+    equal(#g.expenses, 2); equal(g.targetCopper, 2100)
+    equal(g.expenses[2].paid, false)
+end)
+
+test("unknown prices stay unknown and pet training points are ignored", function()
+    reset(); ns.db.trainerCatalog = {}
+    services = { { name = "Unknown cost", level = 8, status = "unavailable" } }
+    ns.CaptureTrainerPrices()
+    local g = ns.NewPresetGoal("class-training"); ns.EnableItemPlanning(g)
+    equal(#g.expenses, 1); equal(g.expenses[1].copper, nil); equal(g.targetCopper, 0)
+    services[1].cost = 999
+    trainerType = Enum.TrainerType.Pet; ns.CaptureTrainerPrices(); trainerType = 1
+    ns.SyncExpenses(g); equal(g.expenses[1].copper, nil)
+end)
+
+test("profession quotes are isolated from class spell budgets", function()
+    reset(); ns.db.trainerCatalog = {}; professionTrainer = true
+    services = { { name = "Alchemy", rank = "Journeyman", level = 10, cost = 5000 } }
+    ns.CaptureTrainerPrices(); professionTrainer = false
+    local profession = ns.NewPresetGoal("profession-training"); ns.EnableItemPlanning(profession)
+    local class = ns.NewPresetGoal("class-training"); ns.EnableItemPlanning(class)
+    equal(profession.targetCopper, 5000); equal(class.targetCopper, 0)
+end)
+
+test("a real riding quote replaces the starter budget", function()
+    reset(); ns.db.trainerCatalog = {}
+    local g = ns.NewPresetGoal("mount-first"); ns.EnableItemPlanning(g); ns.db.goals = { g }
+    equal(g.targetCopper, 1000000); equal(g.expenses[1].estimated, true)
+    services = { { name = "Apprentice Riding", level = 40, cost = 900000 } }
+    ns.CaptureTrainerPrices()
+    equal(#g.expenses, 1); equal(g.expenses[1].estimated, nil); equal(g.targetCopper, 900000)
+end)
+test("a riding quote retains the player's decision to exclude the starter expense", function()
+    reset(); ns.db.trainerCatalog = {}
+    local g = ns.NewPresetGoal("mount-first"); ns.EnableItemPlanning(g)
+    g.expenses[1].selected = false; ns.db.goals = { g }
+    services = { { name = "Apprentice Riding", level = 40, cost = 900000 } }
+    ns.CaptureTrainerPrices()
+    equal(#g.expenses, 1); equal(g.expenses[1].selected, false); equal(g.targetCopper, 0)
+end)
+test("level-one spell quotes retain their real level and reserve their cost", function()
+    reset(); ns.db.trainerCatalog = {}
+    services = { { name = "First spell", level = 1, cost = 10 } }
+    ns.CaptureTrainerPrices()
+    local g = ns.NewPresetGoal("class-training"); ns.EnableItemPlanning(g)
+    equal(g.expenses[1].level, 1); equal(Model.TargetAtLevel(g, 1), 10)
+    assert(Model.ValidateGoal(g))
+end)
+
+test("itemized costs are due at their own levels and unchecked costs do not count", function()
+    local g = goal({ planMode = "items", expenses = {
+        { key = "a", name = "Early expense", level = 5, copper = 100, selected = true },
+        { key = "b", name = "Later expense", level = 21, copper = 10000, selected = true },
+        { key = "c", name = "Skip", level = 5, copper = 100000, selected = false },
+        { key = "d", name = "Done", level = 5, copper = 100000, selected = true, paid = true },
+        { key = "e", name = "Beyond horizon", level = 40, copper = 100000, selected = true },
+    } })
+    equal(Model.ExpenseTotal(g), 10100)
+    equal(Model.TargetAtLevel(g, 1), 0)
+    equal(Model.TargetAtLevel(g, 5), 500)
+    equal(Model.TargetAtLevel(g, 21), 10100)
+    equal(Model.TargetAtLevel(g, 60), 10100)
+end)
+
+test("custom goals prompt before displaying any expense choices", function()
+    reset(); ns.db.goals = {}; ns.db.trainerCatalog = {}
+    click(ns.ui, "New goal")
+    ns.ui.name:SetText("Custom project"); ns.ui.level:SetText("21")
+    ns.ui.amount[1]:SetText("10")
+    click(ns.ui.editor, "Save goal")
+    assert(ns.planningConsent:IsShown()); equal(#ns.db.goals, 0)
+    assert(not ns.planningFrame or not ns.planningFrame:IsShown())
+    click(ns.planningConsent, "Choose expenses")
+    assert(ns.planningFrame:IsShown()); equal(#ns.db.goals, 0)
+    ns.planningFrame.rows[1].check:SetChecked(false)
+    ns.planningFrame.rows[1].check.scripts.OnClick(ns.planningFrame.rows[1].check)
+    click(ns.planningFrame, "Apply choices"); click(ns.ui.editor, "Save goal")
+    equal(#ns.db.goals, 1); equal(ns.db.goals[1].planMode, "items")
+    equal(ns.db.goals[1].targetCopper, 0)
+end)
+
+test("training preset offers real-price checkboxes only after consent", function()
+    reset(); ns.db.goals = {}; ns.db.trainerCatalog = {}
+    services = { { name = "Keep spell", level = 8, cost = 1000 }, { name = "Skip spell", level = 10, cost = 2000 } }
+    ns.CaptureTrainerPrices(); ns.UsePreset("class-training")
+    click(ns.ui.editor, "Save goal"); assert(ns.planningConsent:IsShown())
+    assert(not ns.planningFrame:IsShown())
+    click(ns.planningConsent, "Choose expenses")
+    equal(ns.planningFrame.rows[1].name.text, "Keep spell")
+    ns.planningFrame.rows[2].check:SetChecked(false)
+    ns.planningFrame.rows[2].check.scripts.OnClick(ns.planningFrame.rows[2].check)
+    click(ns.planningFrame, "Apply choices"); click(ns.ui.editor, "Save goal")
+    equal(ns.db.goals[1].targetCopper, 1000)
+    equal(ns.db.goals[1].expenses[2].selected, false)
+end)
+
+test("canceling planning keeps the original budget and choices", function()
+    ns.UsePreset("class-training")
+    local before = ns.db.goals[1].targetCopper
+    click(ns.ui.editor, "Choose expenses")
+    ns.planningFrame.rows[1].check:SetChecked(false)
+    ns.planningFrame.rows[1].check.scripts.OnClick(ns.planningFrame.rows[1].check)
+    click(ns.planningFrame, "Cancel")
+    click(ns.ui.editor, "Save goal")
+    equal(ns.db.goals[1].targetCopper, before)
+    equal(ns.db.goals[1].expenses[1].selected, true)
+end)
+
+test("level 60 uses a simple budget without the automatic opt-in prompt", function()
+    reset(); ns.db.goals = {}; level = 60
+    ns.UsePreset("mount-epic"); click(ns.ui.editor, "Save goal")
+    equal(#ns.db.goals, 1); assert(not ns.planningConsent:IsShown())
 end)
 print(string.format("%d tests passed", tests))

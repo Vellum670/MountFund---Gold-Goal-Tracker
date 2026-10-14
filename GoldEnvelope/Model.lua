@@ -37,6 +37,30 @@ function Model.FormatCoins(amount)
     return string.format("%dg %ds %dc", gold, silver, copper)
 end
 
+function Model.CopyGoal(goal)
+    local result = {}
+    for key, value in pairs(goal) do
+        if key ~= "milestones" and key ~= "expenses" then result[key] = value end
+    end
+    result.milestones, result.expenses = {}, {}
+    for level, amount in pairs(goal.milestones or {}) do result.milestones[level] = amount end
+    for index, expense in ipairs(goal.expenses or {}) do
+        result.expenses[index] = {}
+        for key, value in pairs(expense) do result.expenses[index][key] = value end
+    end
+    return result
+end
+
+function Model.ExpenseTotal(goal)
+    local total = 0
+    for _, expense in ipairs(goal.expenses or {}) do
+        if expense.selected and not expense.paid and expense.level <= goal.targetLevel then
+            total = total + (expense.copper or 0)
+        end
+    end
+    return total
+end
+
 function Model.ValidateGoal(goal)
     if type(goal) ~= "table" or type(goal.name) ~= "string" or not goal.name:match("%S") then
         return nil, "Give your goal a name."
@@ -45,10 +69,25 @@ function Model.ValidateGoal(goal)
     if not integer(goal.targetLevel, 2, Model.MAX_LEVEL) then
         return nil, "Target level must be from 2 to " .. Model.MAX_LEVEL .. "."
     end
-    if not integer(goal.targetCopper, 1, Model.MAX_COPPER) then
+    if not integer(goal.targetCopper, goal.planMode == "items" and 0 or 1, Model.MAX_COPPER) then
         return nil, "Set a positive savings amount."
     end
     if not integer(goal.curve, 1, 4) then return nil, "Savings curve must be from 1 to 4." end
+    if goal.planMode == "items" then
+        if type(goal.expenses) ~= "table" then return nil, "Invalid expense plan." end
+        local keys = {}
+        for _, expense in ipairs(goal.expenses) do
+            if type(expense) ~= "table" or type(expense.key) ~= "string" or keys[expense.key]
+                or type(expense.name) ~= "string" or not expense.name:match("%S")
+                or not integer(expense.level, 1, Model.MAX_LEVEL)
+                or (expense.copper ~= nil and not integer(expense.copper, 0, Model.MAX_COPPER)) then
+                return nil, "Each expense needs a name, a unique key, a valid level and a whole coin amount."
+            end
+            keys[expense.key] = true
+        end
+        if Model.ExpenseTotal(goal) > Model.MAX_COPPER then return nil, "Total expense amount is too large." end
+        return true
+    end
     if type(goal.milestones) ~= "table" then return nil, "Invalid milestones." end
     for level, amount in pairs(goal.milestones) do
         if not integer(level, 2, goal.targetLevel - 1)
@@ -75,6 +114,17 @@ function Model.Points(goal)
 end
 
 function Model.TargetAtLevel(goal, level)
+    if goal.planMode == "items" then
+        local reserved = 0
+        for _, expense in ipairs(goal.expenses) do
+            if expense.selected and not expense.paid and expense.level <= goal.targetLevel and expense.copper then
+                local progress = expense.level == 1 and 1
+                    or math.min(1, math.max(0, (level - 1) / (expense.level - 1)))
+                reserved = reserved + math.floor(expense.copper * progress ^ goal.curve)
+            end
+        end
+        return reserved
+    end
     if level <= 1 then return 0 end
     if level >= goal.targetLevel then return goal.targetCopper end
     local points = Model.Points(goal)

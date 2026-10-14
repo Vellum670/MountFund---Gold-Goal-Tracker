@@ -88,7 +88,9 @@ end
 
 local function trainerAction()
     if not shown(ClassTrainerFrame) or not ClassTrainerFrame.selectedService then return end
-    local index = ClassTrainer_GetSkillIndexForDisplayIndex(ClassTrainerFrame.selectedService)
+    local index = ClassTrainerFrame.displayIndexToSkillIndex
+        and ClassTrainerFrame.displayIndexToSkillIndex[ClassTrainerFrame.selectedService]
+        or ClassTrainerFrame.selectedService
     if not index then return end
     local name, serviceType = GetTrainerServiceInfo(index)
     local cost = GetTrainerServiceCost(index)

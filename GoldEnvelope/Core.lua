@@ -83,12 +83,18 @@ end
 local frame = CreateFrame("Frame")
 for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_MONEY", "PLAYER_LEVEL_UP",
     "MERCHANT_SHOW", "MERCHANT_CLOSED", "TRAINER_SHOW", "TRAINER_CLOSED",
-    "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "PLAYER_REGEN_ENABLED" }) do
+    "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "PLAYER_REGEN_ENABLED",
+    "TRAINER_UPDATE", "TRAINER_SERVICE_INFO_NAME_UPDATE" }) do
     frame:RegisterEvent(event)
 end
 frame:SetScript("OnEvent", function(_, event, arg)
     if event == "ADDON_LOADED" and arg == addonName then Initialize() end
     if not ns.db then return end
+    if event == "TRAINER_SHOW" or event == "TRAINER_UPDATE" or event == "TRAINER_SERVICE_INFO_NAME_UPDATE" then
+        C_Timer.After(0, function()
+            if ClassTrainerFrame and ClassTrainerFrame:IsShown() and ns.CaptureTrainerPrices then ns.CaptureTrainerPrices() end
+        end)
+    end
     if event == "MERCHANT_CLOSED" or event == "TRAINER_CLOSED" or event == "AUCTION_HOUSE_CLOSED" then
         ns.CancelPurchase()
     end
