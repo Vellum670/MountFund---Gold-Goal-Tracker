@@ -6,8 +6,11 @@ your current balance, reserve, and spending allowance.
 
 ## Install
 
-Copy the `GoldEnvelope` folder into the Forever client's `Interface/AddOns/`
-folder. The path should end in `AddOns/GoldEnvelope/GoldEnvelope.toc`. Restart
+[Download GoldEnvelope.zip](downloads/GoldEnvelope.zip?raw=true) — contains only
+the `GoldEnvelope` addon folder.
+
+Extract it into the Forever client's `Interface/AddOns/` folder.
+The path should end in `AddOns/GoldEnvelope/GoldEnvelope.toc`. Restart
 the client after first installation, enable the addon, and enter `/envelope`.
 The interface version is `16001` (Forever 1.60.1).
 
