@@ -156,7 +156,7 @@ end
 
 function ns.QueueLevelUpToast(level)
     if not ns.db.levelUpToasts or not ns.BuildLevelUpSummary(level) then return end
-    ns.pendingLevelUpToast = { level = level, readyAt = GetTime() + 0.5 }
+    ns.pendingLevelUpToast = { level = level, preview = ns.testPlayerLevel ~= nil, readyAt = GetTime() + 0.5 }
     if inCombat() and ns.levelUpToast then
         ns.levelUpToast.startedAt = nil; ns.levelUpToast:SetAlpha(0); ns.levelUpToast:Hide()
     end
@@ -165,6 +165,6 @@ end
 
 -- TEMPORARY: remove this helper and /ge testtoast after in-game review.
 function ns.TestLevelUpToast()
-    ns.pendingLevelUpToast = { level = UnitLevel("player"), preview = true, readyAt = GetTime() }
+    ns.pendingLevelUpToast = { level = ns.GetPlayerLevel(), preview = true, readyAt = GetTime() }
     ns.FlushLevelUpToast()
 end

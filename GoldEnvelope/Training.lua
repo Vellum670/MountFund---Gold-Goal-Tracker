@@ -109,7 +109,7 @@ end
 -- An optional roster merges its active training choices with a staged goal.
 -- This keeps an initial allocation from taking another goal's training money.
 function ns.TrainingRunway(goal, force, goals, levelOverride)
-    local level = levelOverride or UnitLevel("player")
+    local level = levelOverride or ns.GetPlayerLevel()
     local enabled, selected = force or (goal and goal.includeClassTraining), {}
     local function addSelections(g)
         for _, e in ipairs(g.expenses or {}) do

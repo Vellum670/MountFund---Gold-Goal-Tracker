@@ -80,6 +80,18 @@ or changing savings. It uses your current goals, or a clearly labeled example
 if none are active. Preview also works while normal toasts are turned off and
 waits until combat ends. This command will be removed after in-game review.
 
+**Temporary level command:** `/ge testlevel 40` makes Gold Envelope calculate
+progress and training costs as if you were level 40 and previews the toast.
+Choose any whole level from 1 to 60. `/ge testlevel` reports the current override;
+`/ge testlevel reset` returns to your actual level. The goal window shows a
+**Test level** label while the override is active.
+
+The override is session-only and resets on `/reload`, logout, exiting the game,
+or changing characters. It changes no actual character level, money, or saved
+progress by itself. Goal edits and new goals still autosave normally while
+testing. Income records continue to use your real character level. Both test
+commands will be removed from the final build.
+
 ## Expenses and Class Training
 
 New goals include eligible, unlearned **class training** by default. The bundled

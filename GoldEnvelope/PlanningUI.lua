@@ -84,7 +84,7 @@ local function abilityGroups(goal,classOnly)
                 byKey[key]=group; groups[#groups+1]=group
             end
             group.expenses[#group.expenses+1]=expense
-            if expense.level >= (goal.startLevel or UnitLevel("player")) and expense.level <= goal.targetLevel then
+            if expense.level >= (goal.startLevel or ns.GetPlayerLevel()) and expense.level <= goal.targetLevel then
                 group.relevant[#group.relevant+1]=expense
                 local trainable=not expense.paid and expense.eligible~=false
                 if not group.expense or (trainable and not group.hasTrainable) then
@@ -124,12 +124,17 @@ function ns.RefreshExpensePlanner()
             local button=frame.expenseButtons[visible]
             if not button then
                 button=CreateFrame("Button",nil,frame.content); button:SetSize(36,36)
-                button.icon=button:CreateTexture(nil,"ARTWORK"); button.icon:SetAllPoints()
+                -- A solid inset frame stays inside the button. Quickslot artwork
+                -- has oversized decorative corners that overlap this dense grid.
+                button.border=button:CreateTexture(nil,"BACKGROUND"); button.border:SetAllPoints()
+                button.icon=button:CreateTexture(nil,"ARTWORK")
+                button.icon:SetPoint("TOPLEFT",2,-2); button.icon:SetPoint("BOTTOMRIGHT",-2,2)
                 button.icon:SetTexCoord(0.07,0.93,0.07,0.93)
-                button.border=button:CreateTexture(nil,"OVERLAY")
-                button.border:SetTexture("Interface\\Buttons\\UI-Quickslot2")
-                button.border:SetPoint("TOPLEFT",-5,5); button.border:SetSize(46,46)
-                button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square","ADD")
+                button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square","BLEND")
+                local highlight=button:GetHighlightTexture()
+                highlight:ClearAllPoints()
+                highlight:SetPoint("TOPLEFT",2,-2); highlight:SetPoint("BOTTOMRIGHT",-2,2)
+                highlight:SetColorTexture(1,1,1,0.12)
                 button.level=UI.Label(button,"",-2,-39,40,"GameFontDisableSmall")
                 button.level:SetJustifyH("CENTER"); button.level:SetWordWrap(false)
                 button:SetScript("OnClick",function(self)
@@ -153,7 +158,7 @@ function ns.RefreshExpensePlanner()
             button.icon:SetDesaturated(not included)
             local tint=included and 1 or 0.5
             button.icon:SetVertexColor(tint,tint,tint)
-            button.border:SetVertexColor(included and 1 or 0.45,included and 0.82 or 0.45,included and 0.3 or 0.45)
+            button.border:SetColorTexture(included and 0.72 or 0.3,included and 0.55 or 0.3,included and 0.24 or 0.3,1)
             button.level:SetText("Lv " .. group.requiredLevel)
             button:Show()
             if included and group.unknown then unknown=unknown+1 end

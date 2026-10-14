@@ -6,6 +6,20 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 No changes queued yet.
 
+## 0.3.5 - 2026-10-14
+
+- Added temporary `/ge testlevel 1-60` to simulate a character level inside
+  Gold Envelope and preview its goal progress, training costs, and level-up toast.
+- Use `/ge testlevel reset` to return to your real level. The override also
+  resets on reload, logout, or character change and is never saved.
+- Show the active test level in the goal window. The command does not change
+  your character's actual level, money, or existing saved progress.
+
+## 0.3.4 - 2026-10-14
+
+- Fixed overlapping borders on training ability icons. Each icon now has a
+  consistent, thin gold or grey frame, with hover highlighting inside it.
+
 ## 0.3.3 - 2026-10-14
 
 - Added a quiet level-up toast with actual goal savings, an animated progress

@@ -28,6 +28,7 @@ local function frame(parent)
     function methods:SetTexture(texture) self.texture=texture end
     function methods:SetDesaturated(desaturated) self.desaturated=desaturated end
     function methods:SetVertexColor(r,g,b,a) self.color={r,g,b,a} end
+    function methods:SetColorTexture(r,g,b,a) self.color={r,g,b,a} end
     function methods:SetAlpha(alpha) self.alpha=alpha end
     function methods:GetAlpha() return self.alpha or 1 end
     function methods:EnableMouse(enabled) self.mouseEnabled=enabled end
@@ -51,6 +52,8 @@ local function frame(parent)
     function methods:CreateFontString() return frame(self) end
     function methods:SetNormalTexture() self.normal=frame(self) end
     function methods:GetNormalTexture() return self.normal end
+    function methods:SetHighlightTexture() self.highlight=frame(self) end
+    function methods:GetHighlightTexture() return self.highlight end
     setmetatable(value,{__index=function(_,key) return methods[key] or (key:match('^%u') and function() end or nil) end})
     controls[#controls+1]=value; return value
 end
@@ -105,6 +108,7 @@ local M=ns.Model
 local function reset(newLevel,newMoney)
     ns.CancelPurchase(); ns.ClosePlanningWindows()
     ns.HideLevelUpToast()
+    ns.testPlayerLevel=nil
     level,money,class=newLevel or 25,newMoney or 48705,'WARRIOR'
     ns.db={version=2,goals={},trainerCatalog={},warnings=true,earnings={},levelUpToasts=true}
     ns.lastMoney,ns.sessionStarted=money,true
@@ -861,5 +865,169 @@ test('testtoast with no goals shows a clearly marked example without creating or
     local toast=shownToast(); equal(toast.summary.preview,true)
     assert(toast.title.text:lower():find('preview',1,true)); equal(#ns.db.goals,0)
     equal(money,48705); equal(ns.lastMoney,48705); equal(next(ns.db.earnings),nil)
+end)
+local function copyData(value)
+    if type(value)~='table' then return value end
+    local copy={}
+    for key,item in pairs(value) do copy[key]=copyData(item) end
+    return copy
+end
+local function sameData(actual,expected,path)
+    path=path or 'saved data'
+    equal(type(actual),type(expected),path .. ' type')
+    if type(expected)~='table' then equal(actual,expected,path); return end
+    for key,item in pairs(expected) do sameData(actual[key],item,path .. '.' .. tostring(key)) end
+    for key in pairs(actual) do assert(expected[key]~=nil,path .. ' unexpectedly contains ' .. tostring(key)) end
+end
+
+test('temporary level simulation changes addon progress without changing player APIs or savings',function()
+    reset(); local g=goal(); g.savedCopper=9741; ns.db.goals={g}
+    local previous=copyData(ns.db); local oldLevelAPI,oldClassAPI=UnitLevel,UnitClass
+    local before=ns.GetBudget(); assert(before.ahead>0)
+    SlashCmdList.GOLDENVELOPE('testlevel 40')
+    equal(ns.GetPlayerLevel(),40); equal(UnitLevel('player'),25)
+    equal(UnitLevel,oldLevelAPI); equal(UnitClass,oldClassAPI); equal(class,'WARRIOR')
+    local budget=ns.GetBudget(); equal(budget.expected,1000000); equal(budget.behind,990259)
+    equal(budget.saved,9741); equal(budget.balance,48705)
+    local toast=shownToast(); equal(toast.summary.preview,true); equal(toast.summary.level,40)
+    equal(toast.summary.goals[1].behind,budget.behind)
+    equal(money,48705); equal(ns.lastMoney,48705); equal(ns.lastLevelUpEvent,25)
+    sameData(ns.db,previous)
+    SlashCmdList.GOLDENVELOPE('status')
+    local output=table.concat(messages,'\n'); assert(output:find('behind: 99g 2s 59c',1,true))
+end)
+test('temporary level simulation accepts both boundary levels and previews without saving a goal',function()
+    reset(); local previous=copyData(ns.db)
+    for _,simulated in ipairs({1,60}) do
+        SlashCmdList.GOLDENVELOPE('testlevel ' .. simulated)
+        equal(ns.GetPlayerLevel(),simulated); equal(UnitLevel('player'),25)
+        equal(shownToast().summary.level,simulated); equal(shownToast().summary.preview,true)
+        equal(#ns.db.goals,0); sameData(ns.db,previous)
+    end
+end)
+test('invalid test levels leave the current simulation pending purchase and saved data unchanged',function()
+    pending(); local warning=ns.pending
+    ns.testPlayerLevel=35
+    local previous=copyData(ns.db)
+    for _,argument in ipairs({'0','61','-1','25.5','25.0','4e1','0x28','+25','nan','inf','hello','25 extra','reset extra'}) do
+        local revision=ns.revision
+        SlashCmdList.GOLDENVELOPE('testlevel ' .. argument)
+        equal(ns.GetPlayerLevel(),35,argument); equal(ns.pending,warning,argument)
+        equal(ns.revision,revision,argument); equal(executions,0,argument)
+        sameData(ns.db,previous)
+    end
+    assert(table.concat(messages,'\n'):find('Usage: /ge testlevel',1,true))
+end)
+test('querying the temporary test level reports real and simulated levels without side effects',function()
+    reset(); local previous=copyData(ns.db)
+    SlashCmdList.GOLDENVELOPE('testlevel')
+    equal(ns.testPlayerLevel,nil); assert(table.concat(messages,'\n'):find('actual level: 25',1,true))
+    SlashCmdList.GOLDENVELOPE('testlevel 40')
+    local preview=shownToast().summary; local revision=ns.revision; messages={}
+    SlashCmdList.GOLDENVELOPE('testlevel')
+    equal(ns.GetPlayerLevel(),40); equal(shownToast().summary,preview); equal(ns.revision,revision)
+    local output=table.concat(messages,'\n')
+    assert(output:find('Test level: 40',1,true)); assert(output:find('actual level: 25',1,true))
+    sameData(ns.db,previous)
+end)
+test('simulated level moves the shared training runway to the relevant spell costs',function()
+    reset(); local g=goal(1000000,60); g.includeClassTraining=true; ns.SyncExpenses(g); ns.db.goals={g}
+    local previous=copyData(ns.db); equal(ns.GetBudget().trainingDue,30000)
+    local totals=ns.TrainingByLevel(g)
+    SlashCmdList.GOLDENVELOPE('testlevel 45')
+    local expected=(totals[45] or 0)+(totals[46] or 0)+(totals[47] or 0)
+    assert(expected>30000); equal(ns.GetBudget().trainingDue,expected)
+    equal(ns.TrainingRunway(),expected); equal(UnitLevel('player'),25)
+    sameData(ns.db,previous)
+    SlashCmdList.GOLDENVELOPE('testlevel reset'); equal(ns.GetBudget().trainingDue,30000)
+end)
+test('level simulation refreshes the goal editor its plan highlight and open training budget',function()
+    reset(); ns.UsePreset('mount-first'); click(ns.ui.editor,'Class training')
+    local g=ns.db.goals[1]; local previous=copyData(ns.db)
+    SlashCmdList.GOLDENVELOPE('testlevel 30')
+    assert(ns.ui.summary.text:find('Test level 30',1,true))
+    local progress=M.GoalProgress(g,30)
+    assert(ns.ui.progress.text:find(ns.MoneyText(progress.behind),1,true))
+    equal(ns.ui.planRows[30].background.color[4],0.35)
+    assert(ns.ui.planRows[25].background.color[4]~=0.35)
+    local training=ns.TrainingRunway(g)
+    assert(ns.planningFrame.summary.text:find(ns.MoneyText(training),1,true))
+    sameData(ns.db,previous)
+    SlashCmdList.GOLDENVELOPE('testlevel reset')
+    assert(not ns.ui.summary.text:find('Test level',1,true))
+    equal(ns.ui.planRows[25].background.color[4],0.35)
+end)
+test('testtoast uses the simulated level while real level events keep their actual tracking',function()
+    reset(); ns.db.goals={goal()}; SlashCmdList.GOLDENVELOPE('testlevel 45')
+    SlashCmdList.GOLDENVELOPE('testtoast'); equal(shownToast().summary.level,45)
+    eventFrame.scripts.OnEvent(nil,'PLAYER_LEVEL_UP',26); advanceToast(0.6)
+    equal(ns.lastLevelUpEvent,26); equal(shownToast().summary.level,45)
+    equal(ns.GetPlayerLevel(),45); equal(UnitLevel('player'),25)
+end)
+test('actual earnings remain recorded at the real character level during simulation',function()
+    reset(); local g=goal(); g.savedCopper=9741; ns.db.goals={g}
+    SlashCmdList.GOLDENVELOPE('testlevel 45')
+    money=money+10000; eventFrame.scripts.OnEvent(nil,'PLAYER_MONEY')
+    equal(ns.db.earnings[25].income,10000); equal(ns.db.earnings[45],nil)
+    equal(g.savedCopper,19741); equal(ns.lastMoney,58705)
+    money=money-1000; eventFrame.scripts.OnEvent(nil,'PLAYER_MONEY')
+    equal(ns.db.earnings[25].spending,1000); equal(ns.db.earnings[45],nil)
+end)
+test('money funding protects real training costs while a later level is simulated',function()
+    reset(25,30000); local g=goal(); g.includeClassTraining=true; ns.SyncExpenses(g); ns.db.goals={g}
+    SlashCmdList.GOLDENVELOPE('testlevel 45'); assert(ns.GetBudget().trainingDue>40000)
+    money=money+10000; eventFrame.scripts.OnEvent(nil,'PLAYER_MONEY')
+    equal(g.savedCopper,10000); equal(ns.db.earnings[25].income,10000); equal(ns.db.earnings[45],nil)
+    equal(ns.TrainingRunway(nil,nil,nil,25),30000)
+end)
+test('setting and resetting a test level clears stale confirmations without granting a cooldown',function()
+    pending(); SlashCmdList.GOLDENVELOPE('testlevel 40')
+    equal(ns.pending,nil); equal(ns.warningFrame:IsShown(),false); equal(executions,0)
+    equal(ns.WarningCooldownRemaining(),0); ns.ConfirmPurchase(); equal(executions,0)
+    ns.RequestPurchase(read,execute); assert(ns.pending)
+    SlashCmdList.GOLDENVELOPE('testlevel reset')
+    equal(ns.pending,nil); equal(ns.warningFrame:IsShown(),false); equal(executions,0)
+    equal(ns.WarningCooldownRemaining(),0); equal(ns.GetPlayerLevel(),25)
+    assert(not ns.levelUpToast:IsShown()); equal(ns.pendingLevelUpToast,nil)
+end)
+test('reset discards combat delayed simulated previews without altering saved goals',function()
+    reset(); ns.db.goals={goal()}; inCombat=true
+    local previous=copyData(ns.db)
+    SlashCmdList.GOLDENVELOPE('testlevel 40'); assert(ns.pendingLevelUpToast)
+    SlashCmdList.GOLDENVELOPE('testlevel reset')
+    equal(ns.testPlayerLevel,nil); equal(ns.GetPlayerLevel(),25); equal(ns.pendingLevelUpToast,nil)
+    inCombat=false; eventFrame.scripts.OnEvent(nil,'PLAYER_REGEN_ENABLED'); advanceToast(0.6)
+    assert(not ns.levelUpToast:IsShown()); sameData(ns.db,previous)
+end)
+test('logout clears temporary level preview and pending purchases before the next character session',function()
+    pending(); local previous=copyData(ns.db)
+    SlashCmdList.GOLDENVELOPE('testlevel 40'); assert(ns.levelUpToast:IsShown())
+    ns.RequestPurchase(read,execute); assert(ns.pending)
+    eventFrame.scripts.OnEvent(nil,'PLAYER_LOGOUT')
+    equal(ns.testPlayerLevel,nil); equal(ns.GetPlayerLevel(),25); equal(ns.pending,nil)
+    equal(ns.pendingLevelUpToast,nil); assert(not ns.levelUpToast:IsShown())
+    sameData(ns.db,previous)
+end)
+test('reloading with the same saved database restores actual level and does not persist the override',function()
+    reset(); ns.db.goals={goal()}; local previousGlobal=GoldEnvelopeDB
+    SlashCmdList.GOLDENVELOPE('testlevel 40')
+    GoldEnvelopeDB=ns.db
+    for key in pairs(GoldEnvelopeDB) do assert(not tostring(key):lower():find('testlevel',1,true)) end
+    eventFrame.scripts.OnEvent(nil,'ADDON_LOADED','GoldEnvelope')
+    ns.sessionStarted=false; eventFrame.scripts.OnEvent(nil,'PLAYER_LOGIN')
+    equal(ns.testPlayerLevel,nil); equal(ns.GetPlayerLevel(),25); equal(ns.lastLevelUpEvent,25)
+    equal(ns.pendingLevelUpToast,nil); assert(not ns.levelUpToast:IsShown())
+    equal(ns.db.goals[1].startLevel,25); equal(ns.db.goals[1].savedCopper,0)
+    GoldEnvelopeDB=previousGlobal
+end)
+test('a fresh character database starts at its real level after a prior simulated session',function()
+    reset(); SlashCmdList.GOLDENVELOPE('testlevel 60')
+    local previousGlobal=GoldEnvelopeDB
+    level=12; GoldEnvelopeDB={goals={}}
+    eventFrame.scripts.OnEvent(nil,'ADDON_LOADED','GoldEnvelope')
+    ns.sessionStarted=false; eventFrame.scripts.OnEvent(nil,'PLAYER_LOGIN')
+    equal(ns.GetPlayerLevel(),12); equal(ns.lastLevelUpEvent,12); equal(ns.testPlayerLevel,nil)
+    equal(#ns.db.goals,0); equal(ns.pendingLevelUpToast,nil); assert(not ns.levelUpToast:IsShown())
+    GoldEnvelopeDB=previousGlobal
 end)
 print(tests .. ' tests passed')

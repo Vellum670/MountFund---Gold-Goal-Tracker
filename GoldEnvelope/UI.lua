@@ -151,7 +151,7 @@ local function renderPlan(goal)
     ui.planRows = ui.planRows or {}
     for _, row in pairs(ui.planRows) do row:Hide() end
     local training = goal.includeClassTraining and ns.TrainingByLevel(goal) or {}
-    local start, finish = goal.startLevel or UnitLevel("player"), math.max(goal.startLevel or 1, goal.targetLevel)
+    local start, finish = goal.startLevel or ns.GetPlayerLevel(), math.max(goal.startLevel or 1, goal.targetLevel)
     for level = start, finish do
         local row = ui.planRows[level]
         if not row then
@@ -171,11 +171,11 @@ local function renderPlan(goal)
         row.target:SetText(ns.MoneyText(target))
         row.addition:SetText(level == start and "" or "+ " .. ns.MoneyText(math.max(0,target-prior)))
         row.training:SetText(ns.MoneyText(training[level] or 0))
-        row.background:SetColorTexture(0.65,0.48,0.22,level == UnitLevel("player") and 0.35 or (level % 2 == 0 and 0.07 or 0))
+        row.background:SetColorTexture(0.65,0.48,0.22,level == ns.GetPlayerLevel() and 0.35 or (level % 2 == 0 and 0.07 or 0))
         row:Show()
     end
     ui.planContent:SetHeight(math.max(1,(finish-start+1)*37))
-    ui.scroll:SetVerticalScroll(math.max(0,UnitLevel("player")-start-1)*37)
+    ui.scroll:SetVerticalScroll(math.max(0,ns.GetPlayerLevel()-start-1)*37)
 end
 
 local refreshGoalList, saveCurrentGoal
@@ -197,7 +197,7 @@ local function showEditor(updated)
     local ui = ns.ui
     ui.updatingEditor=true
     local saved = ns.db.goals[selected]
-    draft = updated or (saved and copyGoal(saved)) or { name = "", targetLevel = math.min(60,math.max(40,UnitLevel("player")+1)),
+    draft = updated or (saved and copyGoal(saved)) or { name = "", targetLevel = math.min(60,math.max(40,ns.GetPlayerLevel()+1)),
         targetCopper = 0, curve = 0, active = true, milestones = {}, expenses = {}, initialPercent = 20,
         includeClassTraining = true }
     ns.PrepareGoal(draft, saved)
@@ -274,12 +274,14 @@ end
 function ns.RefreshUI()
     if not ns.ui or not ns.db then return end
     local ui,budget=ns.ui,ns.GetBudget()
-    ui.summary:SetText("Wallet " .. ns.MoneyText(budget.balance) .. "\nSaved " .. ns.MoneyText(budget.saved)
+    ui.summary:SetText("Wallet " .. ns.MoneyText(budget.balance)
+        .. (ns.testPlayerLevel and "  [Test level " .. ns.testPlayerLevel .. "]" or "")
+        .. "\nSaved " .. ns.MoneyText(budget.saved)
         .. "  |  " .. (budget.behind > 0 and "Behind " or "Ahead ") .. ns.MoneyText(budget.behind > 0 and budget.behind or budget.ahead)
         .. (not budget.trainingComplete and "\nSome training prices are unknown." or ""))
     if draft then
         if ns.db.goals[selected] then draft.savedCopper = ns.db.goals[selected].savedCopper end
-        local progress=Model.GoalProgress(draft,UnitLevel("player"))
+        local progress=Model.GoalProgress(draft,ns.GetPlayerLevel())
         if draft.targetCopper == 0 and draft.includeClassTraining then
             ui.progress:SetText("Training funded " .. ns.MoneyText(budget.trainingFunded) .. " / " .. ns.MoneyText(budget.trainingDue))
         else
