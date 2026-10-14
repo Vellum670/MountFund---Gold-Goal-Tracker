@@ -12,7 +12,7 @@ ns.Presets = {
         note = "Mount budget: edit to match your trainer's price." },
     { id = "class-training", name = "Class training", targetLevel = 60,
         targetCopper = 0, icon = "Interface\\Icons\\INV_Misc_Book_09",
-        note = "Visit your class trainer to capture spell ranks and prices." },
+        note = "Class-wide base prices included; trainer quotes override them." },
     { id = "profession-training", name = "Profession training", targetLevel = 60,
         targetCopper = 0, icon = "Interface\\Icons\\Trade_BlackSmithing",
         note = "Visit profession trainers to capture ranks, recipes and prices." },
@@ -28,5 +28,6 @@ function ns.NewPresetGoal(id)
     local preset = ns.FindPreset(id)
     if not preset then return nil end
     return { name = preset.name, presetID = preset.id, targetLevel = preset.targetLevel,
-        targetCopper = preset.targetCopper, curve = 2, active = true, milestones = {}, expenses = {} }
+        targetCopper = preset.targetCopper, curve = 0, active = true, milestones = {}, expenses = {},
+        includeClassTraining = id == "class-training", initialPercent = 20 }
 end

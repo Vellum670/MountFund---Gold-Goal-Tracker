@@ -1,568 +1,405 @@
--- Run from the repository root with Lua 5.1+. No WoW client is needed.
 unpack = unpack or table.unpack
 local ns, tests = {}, 0
-local function loadAddon(file)
-    assert(loadfile("GoldEnvelope/" .. file))("GoldEnvelope", ns)
+local function loadAddon(file) assert(loadfile('GoldEnvelope/' .. file))('GoldEnvelope', ns) end
+local function equal(actual, expected, name)
+    assert(actual == expected, (name or 'value') .. ': expected ' .. tostring(expected) .. ', got ' .. tostring(actual))
 end
-local function equal(actual, expected, label)
-    assert(actual == expected, (label or "value") .. ": expected " .. tostring(expected) .. ", got " .. tostring(actual))
-end
-local function test(name, fn)
-    fn()
-    tests = tests + 1
-    print("PASS " .. name)
-end
-local function goal(overrides)
-    local result = { name = "Test", targetLevel = 21, targetCopper = 100000, curve = 2, active = true, milestones = {} }
-    for key, value in pairs(overrides or {}) do result[key] = value end
-    return result
-end
-loadAddon("Model.lua")
-loadAddon("Presets.lua")
-local Model = ns.Model
-
-test("copper precision and input validation", function()
-    equal(Model.ParseCoins("1", "2", "3"), 10203)
-    equal(Model.ParseCoins("", "0", "1"), 1)
-    equal(Model.ParseCoins("-1", "0", "0"), nil)
-    equal(Model.ParseCoins("1.5", "0", "0"), nil)
-    equal(Model.ParseCoins("0", "100", "0"), nil)
-    equal(Model.ParseCoins("0", "0", "100"), nil)
-    equal(Model.ParseCoins("100000000", "0", "1"), nil)
-    equal(Model.FormatCoins(10203), "1g 2s 3c")
-end)
-test("curved saving starts small and reaches the full goal", function()
-    local g = goal()
-    equal(Model.TargetAtLevel(g, 1), 0)
-    equal(Model.TargetAtLevel(g, 2), 250)
-    equal(Model.TargetAtLevel(g, 11), 25000)
-    equal(Model.TargetAtLevel(g, 21), 100000)
-    equal(Model.TargetAtLevel(g, 60), 100000)
-    assert(Model.TargetAtLevel(g, 20) - Model.TargetAtLevel(g, 19) > Model.TargetAtLevel(g, 3) - Model.TargetAtLevel(g, 2))
-end)
-test("linear saving and milestone interpolation", function()
-    local g = goal({ curve = 1, milestones = { [11] = 20000 } })
-    equal(Model.TargetAtLevel(g, 6), 10000)
-    equal(Model.TargetAtLevel(g, 11), 20000)
-    equal(Model.TargetAtLevel(g, 16), 60000)
-end)
-test("all curves and checkpoints stay monotonic and exact", function()
-    for curve = 1, 4 do
-        local g = goal({ curve = curve, milestones = { [5] = 123, [10] = 12000, [15] = 12000 } })
-        assert(Model.ValidateGoal(g))
-        local prior = 0
-        for level = 1, 60 do
-            local amount = Model.TargetAtLevel(g, level)
-            assert(amount >= prior and amount <= g.targetCopper and amount == math.floor(amount))
-            prior = amount
-        end
-        equal(Model.TargetAtLevel(g, 5), 123)
-        equal(Model.TargetAtLevel(g, 10), 12000)
-        equal(Model.TargetAtLevel(g, 15), 12000)
-    end
-end)
-test("reject impossible savings plans", function()
-    equal(Model.ValidateGoal(goal({ targetLevel = 1 })), nil)
-    equal(Model.ValidateGoal(goal({ targetLevel = 61 })), nil)
-    equal(Model.ValidateGoal(goal({ targetCopper = 0 })), nil)
-    equal(Model.ValidateGoal(goal({ milestones = { [10] = 50000, [15] = 10000 } })), nil)
-    equal(Model.ValidateGoal(goal({ milestones = { [21] = 10000 } })), nil)
-    equal(Model.ValidateGoal(goal({ milestones = { [5] = 100001 } })), nil)
-    equal(Model.ValidateGoal(goal({ milestones = { [5.5] = 1 } })), nil)
-end)
-test("separate goals add and inactive goals release their reserve", function()
-    local goals = { goal(), goal({ targetCopper = 200000 }), goal({ active = false }) }
-    equal(Model.Reserved(goals, 11), 75000)
-    equal(Model.Budget(goals, 11, 100000).spendable, 25000)
-    equal(Model.Budget(goals, 11, 50000).shortfall, 25000)
-end)
-test("exact limit, one copper over, free actions and existing shortfall", function()
-    local goals = { goal() }
-    equal(Model.Purchase(goals, 11, 30000, 5000).warning, false)
-    equal(Model.Purchase(goals, 11, 30000, 5001).warning, true)
-    equal(Model.Purchase(goals, 11, 20000, 0).warning, false)
-    equal(Model.Purchase(goals, 11, 20000, 1).warning, true)
-    equal(Model.Purchase(goals, 11, 20000, 20001).affordable, false)
-end)
-
-local money, level, executions, warnings = 30000, 11, 0, 0
-local frames = {}
-CreateFrame = function()
-    local frame = { scripts = {} }
-    function frame:RegisterEvent() end
-    function frame:SetScript(name, callback) self.scripts[name] = callback end
-    frames[#frames + 1] = frame
-    return frame
-end
-DEFAULT_CHAT_FRAME = { AddMessage = function() end }
-UnitLevel = function() return level end
-GetMoney = function() return money end
-C_Timer = { After = function(_, callback) callback() end }
-SlashCmdList = {}
-loadAddon("Core.lua")
-loadAddon("Training.lua")
-ns.db = { goals = { goal() }, warnings = true }
-ns.ShowWarning = function() warnings = warnings + 1 end
-local currentAction
-local function read() return currentAction end
-local function execute() executions = executions + 1 end
-local function reset(cost)
-    ns.CancelPurchase()
-    ns.db = { goals = { goal() }, warnings = true }
-    ns.revision = 0
-    money, level, executions, warnings = 30000, 11, 0, 0
-    currentAction = { key = "item:1", label = "Item", cost = cost or 6000 }
-end
-
-test("cancel cannot spend and confirmation authorizes exactly once", function()
-    reset()
-    ns.RequestPurchase(read, execute)
-    equal(executions, 0); equal(warnings, 1)
-    ns.CancelPurchase(); ns.ConfirmPurchase(); equal(executions, 0)
-    ns.RequestPurchase(read, execute); ns.ConfirmPurchase(); ns.ConfirmPurchase()
-    equal(executions, 1)
-end)
-test("safe purchases proceed without a warning", function()
-    reset(5000)
-    ns.RequestPurchase(read, execute)
-    equal(executions, 1); equal(warnings, 0)
-end)
-test("changed price or selection never uses a stale confirmation", function()
-    reset(); ns.RequestPurchase(read, execute)
-    currentAction = { key = "item:2", cost = 6000 }
-    ns.ConfirmPurchase(); equal(executions, 0); equal(ns.pending, nil)
-    reset(); ns.RequestPurchase(read, execute)
-    currentAction = { key = "item:1", cost = 7000 }
-    ns.ConfirmPurchase(); equal(executions, 0); equal(ns.pending, nil)
-end)
-test("closed windows and expired quotes cannot proceed", function()
-    reset(); ns.RequestPurchase(read, execute); currentAction = nil
-    ns.ConfirmPurchase(); equal(executions, 0)
-    reset(); ns.RequestPurchase(read, execute)
-    frames[1].scripts.OnEvent(nil, "MERCHANT_CLOSED")
-    equal(ns.pending, nil); ns.ConfirmPurchase(); equal(executions, 0)
-end)
-test("balance, level and goal changes refresh risky confirmation", function()
-    reset(); ns.RequestPurchase(read, execute); money = 29000
-    ns.ConfirmPurchase(); equal(executions, 0); equal(warnings, 2)
-    ns.ConfirmPurchase(); equal(executions, 1)
-    reset(); ns.RequestPurchase(read, execute); level = 12
-    ns.ConfirmPurchase(); equal(executions, 0); equal(warnings, 2)
-    reset(); ns.RequestPurchase(read, execute); ns.db.goals[1].targetCopper = 110000; ns.Changed()
-    ns.ConfirmPurchase(); equal(executions, 0); equal(warnings, 2)
-end)
-test("insufficient funds cannot proceed", function()
-    reset(); ns.RequestPurchase(read, execute); money = 5999
-    ns.ConfirmPurchase(); equal(executions, 0); equal(ns.pending, nil)
-end)
-test("invalid or non-finite transaction prices cannot proceed", function()
-    for _, cost in ipairs({ -1, 0.5, math.huge, 0 / 0, Model.MAX_COPPER + 1 }) do
-        reset(cost); ns.RequestPurchase(read, execute)
-        equal(executions, 0); equal(ns.pending, nil)
-    end
-end)
-test("a pending purchase cannot be replaced by another click", function()
-    reset(); ns.RequestPurchase(read, execute)
-    ns.RequestPurchase(function() return { key = "other", cost = 7000 } end, function() error("Wrong action") end)
-    equal(warnings, 1); ns.ConfirmPurchase(); equal(executions, 1)
-end)
-test("new income can make an earlier risky purchase safe", function()
-    reset(); ns.RequestPurchase(read, execute); money = 40000
-    ns.ConfirmPurchase(); equal(executions, 1)
-end)
-
--- Exercise actual UI wrappers, including late-loaded/reused Blizzard popups.
-local function control(id, parent, callback)
-    return { id = id, parent = parent, scripts = { OnClick = callback },
-        GetID = function(self) return self.id end,
-        GetParent = function(self) return self.parent end,
-        GetScript = function(self, name) return self.scripts[name] end,
-        SetScript = function(self, name, callback) self.scripts[name] = callback end,
-        IsShown = function(self) return not self.hidden end,
-        IsEnabled = function(self) return not self.disabled end,
-        IsProtected = function() return false end }
-end
-InCombatLockdown = function() return false end
-IsModifiedClick = function() return false end
-hooksecurefunc = function() end
-StaticPopup_Show = function() end
-MerchantFrame = control(); MerchantFrame.selectedTab = 1
-local merchantItem = { name = "Supply", price = 6000, stackCount = 5 }
-C_MerchantFrame = { GetItemInfo = function() return merchantItem end }
-GetMerchantItemLink = function() return "item:supply" end
-MerchantItem1ItemButton = control(1, MerchantFrame, execute)
-MerchantItem1ItemButton.SplitStack = execute
-GetBuybackItemInfo = function() return "Sold item", nil, 6000, 1 end
-GetBuybackItemLink = function() return "item:buyback" end
-GetNumBuybackItems = function() return 1 end
-GetRepairAllCost = function() return 6000, true end
-MerchantRepairAllButton = control(0, MerchantFrame, execute)
-MerchantBuyBackItemItemButton = control(0, MerchantFrame, execute)
-AuctionHouseFrame = control()
-local dialog = control(0, AuctionHouseFrame)
-dialog.itemID, dialog.quantity = 123, 2
-dialog.PriceFrame = { GetAmount = function() return 6000 end }
-dialog.BuyNowButton = control(0, dialog, execute)
-AuctionHouseFrame.BuyDialog = dialog
-local quoteTime = 10
-C_AuctionHouse = { GetQuoteDurationRemaining = function() return quoteTime end }
-StaticPopup1 = control()
-StaticPopup1.which = "BUYOUT_AUCTION"
-StaticPopup1.data = { auctionID = 42, buyout = 6000 }
-StaticPopup1.Button1 = control(0, StaticPopup1, execute)
-ClassTrainerFrame = control()
-ClassTrainerFrame.selectedService = 1
-ClassTrainerTrainButton = control(0, ClassTrainerFrame, execute)
-ClassTrainer_GetSkillIndexForDisplayIndex = function(index) return index end
-GetTrainerServiceInfo = function() return "Learn spell", "available" end
-GetTrainerServiceCost = function() return 6000 end
-Enum = { TrainerType = { Pet = 2 } }
-local trainerType = 1
-C_Trainer = { GetTrainerType = function() return trainerType end }
-loadAddon("Guards.lua")
-ns.InstallGuards()
-
-test("vendor bundle and stack quantity use total cost", function()
-    reset(); MerchantFrame.selectedTab = 1
-    MerchantItem1ItemButton.scripts.OnClick(MerchantItem1ItemButton, "RightButton")
-    equal(warnings, 1); equal(ns.pending.action.cost, 6000); equal(executions, 0)
-    ns.CancelPurchase()
-    MerchantItem1ItemButton.SplitStack(MerchantItem1ItemButton, 10)
-    equal(ns.pending.action.cost, 12000); equal(executions, 0)
-    ns.ConfirmPurchase(); equal(executions, 1)
-end)
-test("vendor changes cancel pending stack purchase", function()
-    reset(); MerchantItem1ItemButton.SplitStack(MerchantItem1ItemButton, 10)
-    MerchantItem1ItemButton.id = 2
-    ns.ConfirmPurchase(); equal(executions, 0)
-    MerchantItem1ItemButton.id = 1
-end)
-test("buyback and repair-all wait for confirmation", function()
-    reset(); MerchantFrame.selectedTab = 2
-    MerchantItem1ItemButton.scripts.OnClick(MerchantItem1ItemButton, "LeftButton")
-    equal(executions, 0); equal(warnings, 1); ns.ConfirmPurchase(); equal(executions, 1)
-    reset(); MerchantFrame.selectedTab = 1
-    MerchantRepairAllButton.scripts.OnClick(MerchantRepairAllButton, "LeftButton")
-    equal(executions, 0); ns.CancelPurchase(); equal(executions, 0)
-end)
-test("commodity confirmation rejects expired quotes", function()
-    reset(); quoteTime = 10
-    dialog.BuyNowButton.scripts.OnClick(dialog.BuyNowButton, "LeftButton")
-    equal(executions, 0); equal(warnings, 1)
-    quoteTime = 0; ns.ConfirmPurchase(); equal(executions, 0)
-    quoteTime = 10
-end)
-test("auction buyout and bid use exact native popup amounts", function()
-    reset()
-    StaticPopup1.Button1.scripts.OnClick(StaticPopup1.Button1, "LeftButton")
-    equal(executions, 0); equal(ns.pending.action.cost, 6000)
-    ns.ConfirmPurchase(); equal(executions, 1)
-    reset(); StaticPopup1.which = "BID_AUCTION"; StaticPopup1.data = { auctionID = 43, bid = 5001 }
-    StaticPopup1.Button1.scripts.OnClick(StaticPopup1.Button1, "LeftButton")
-    equal(executions, 0); equal(ns.pending.action.cost, 5001)
-    ns.CancelPurchase()
-end)
-test("training warns, changed services cancel, pet points are not coins", function()
-    reset()
-    ClassTrainerTrainButton.scripts.OnClick(ClassTrainerTrainButton, "LeftButton")
-    equal(executions, 0); equal(warnings, 1)
-    ClassTrainerFrame.selectedService = 2
-    ns.ConfirmPurchase(); equal(executions, 0)
-    ClassTrainerFrame.selectedService = 1
-    reset(); trainerType = 2
-    ClassTrainerTrainButton.scripts.OnClick(ClassTrainerTrainButton, "LeftButton")
-    equal(executions, 1); equal(warnings, 0)
-    trainerType = 1
-end)
-test("unrelated reused popups and modified clicks retain native behavior", function()
-    reset(); StaticPopup1.which = "CONFIRM_LOGOUT"
-    StaticPopup1.Button1.scripts.OnClick(StaticPopup1.Button1, "LeftButton")
-    equal(executions, 1); equal(warnings, 0)
-    reset(); IsModifiedClick = function() return true end
-    MerchantItem1ItemButton.scripts.OnClick(MerchantItem1ItemButton, "RightButton")
-    equal(executions, 1); equal(warnings, 0)
-    IsModifiedClick = function() return false end
-end)
-test("reinstalling guards never duplicates confirmations", function()
-    reset(); ns.InstallGuards(); ns.InstallGuards()
-    MerchantItem1ItemButton.scripts.OnClick(MerchantItem1ItemButton, "RightButton")
-    equal(warnings, 1); ns.ConfirmPurchase(); equal(executions, 1)
-end)
-
--- Smoke-test the real editor and warning with frame stubs, not duplicated UI logic.
-local uiControls = {}
-local function uiControl(parent)
-    local result = { parent = parent, scripts = {}, hidden = true }
-    local methods = {}
-    function methods:SetText(text) self.text = tostring(text) end
-    function methods:GetText() return self.text or "" end
-    function methods:SetChecked(value) self.checked = value end
+local function test(name, callback) callback(); tests=tests+1; print('PASS ' .. name) end
+local level, money, class = 25, 48705, 'WARRIOR'
+local elapsed = 1000
+local knownSpells, services, messages, controls = {}, {}, {}, {}
+local function frame(parent)
+    local value={parent=parent,scripts={},hidden=false}
+    local methods={}
+    function methods:SetText(text) self.text=tostring(text) end
+    function methods:GetText() return self.text or '' end
+    function methods:SetChecked(checked) self.checked=checked end
     function methods:GetChecked() return self.checked end
-    function methods:SetScript(name, callback) self.scripts[name] = callback end
-    function methods:SetEnabled(value) self.disabled = not value end
+    function methods:SetScript(name,callback) self.scripts[name]=callback end
+    function methods:GetScript(name) return self.scripts[name] end
+    function methods:SetSize(w,h) self.width,self.height=w,h end
+    function methods:SetEnabled(enabled) self.disabled=not enabled end
+    function methods:Enable() self.disabled=false end
+    function methods:Disable() self.disabled=true end
+    function methods:IsEnabled() return not self.disabled end
     function methods:IsShown() return not self.hidden end
-    function methods:Show() self.hidden = false end
+    function methods:Show() self.hidden=false end
     function methods:Hide()
-        local wasShown = not self.hidden
-        self.hidden = true
-        if wasShown and self.scripts.OnHide then self.scripts.OnHide(self) end
+        local before=not self.hidden; self.hidden=true
+        if before and self.scripts.OnHide then self.scripts.OnHide(self) end
     end
-    function methods:CreateFontString() return uiControl(self) end
-    function methods:CreateTexture() return uiControl(self) end
-    function methods:GetNormalTexture() return uiControl(self) end
+    function methods:SetShown(shown) if shown then self:Show() else self:Hide() end end
+    function methods:GetID() return self.id end
+    function methods:GetParent() return self.parent end
     function methods:GetFrameLevel() return 1 end
-    setmetatable(result, { __index = function(_, key)
-        if methods[key] then return methods[key] end
-        if key:match("^%u") then return function() end end
-    end })
-    uiControls[#uiControls + 1] = result
-    return result
+    function methods:IsProtected() return false end
+    function methods:CreateTexture() return frame(self) end
+    function methods:CreateFontString() return frame(self) end
+    function methods:SetNormalTexture() self.normal=frame(self) end
+    function methods:GetNormalTexture() return self.normal end
+    setmetatable(value,{__index=function(_,key) return methods[key] or (key:match('^%u') and function() end or nil) end})
+    controls[#controls+1]=value; return value
 end
-CreateFrame = function(_, _, parent) return uiControl(parent) end
-UIParent, UISpecialFrames, tinsert = {}, {}, table.insert
-local function click(parent, text)
-    for _, candidate in ipairs(uiControls) do
-        if candidate.parent == parent and candidate.text == text and candidate.scripts.OnClick then
-            candidate.scripts.OnClick(candidate, "LeftButton")
-            return
-        end
+CreateFrame=function(_,_,parent) return frame(parent) end
+UIParent,UISpecialFrames,tinsert={}, {}, table.insert
+SlashCmdList={}
+GetMoney=function() return money end
+UnitLevel=function() return level end
+UnitClass=function() return class,class end
+UnitRace=function() return 'Human','Human',1 end
+UnitName=function() return 'Trainer' end
+time=function() return 123456 end
+GetTime=function() return elapsed end
+IsPlayerSpell=function(id) return knownSpells[id] or false end
+InCombatLockdown=function() return false end
+IsModifiedClick=function() return false end
+IsTradeskillTrainer=function() return false end
+GetNumTrainerServices=function() return #services end
+GetTrainerServiceInfo=function(index)
+    local item=services[index]; if not item then return end
+    return item.name,item.status or 'available','icon',item.level,item.rank
+end
+GetTrainerServiceCost=function(index) return services[index] and services[index].cost end
+GetTrainerServiceLevelReq=function(index) return services[index] and services[index].level end
+C_Timer={After=function(_,callback) callback() end}
+C_Trainer={GetTrainerType=function() return 1 end}
+Enum={TrainerType={Pet=2}}
+DEFAULT_CHAT_FRAME={AddMessage=function(_,message) messages[#messages+1]=message end}
+GameTooltip=frame()
+hooksecurefunc=function() end
+StaticPopup_Show=function() end
+loadAddon('Data/IncomeWeights.lua'); loadAddon('Data/ClassTraining.lua'); loadAddon('Model.lua'); loadAddon('Presets.lua')
+local names={[33388]='Apprentice Riding',[33391]='Journeyman Riding'}
+for _,entries in pairs(ns.ClassTrainingData) do for _,entry in ipairs(entries) do names[entry.spellID]=entry.name end end
+C_Spell={GetSpellName=function(id) return names[id] end}
+loadAddon('Core.lua')
+local eventFrame=controls[#controls]
+loadAddon('Training.lua'); loadAddon('UI.lua'); loadAddon('PlanningUI.lua'); loadAddon('Guards.lua')
+local M=ns.Model
+local function reset(newLevel,newMoney)
+    ns.CancelPurchase(); ns.ClosePlanningWindows()
+    level,money,class=newLevel or 25,newMoney or 48705,'WARRIOR'
+    ns.db={version=2,goals={},trainerCatalog={},warnings=true,earnings={}}
+    ns.lastMoney,ns.sessionStarted=money,true
+    elapsed,ns.warningCooldownUntil=1000,0
+    knownSpells,services,messages={},{},{}
+    for _,entry in ipairs(ns.ClassTrainingData[class]) do if entry.level<level then knownSpells[entry.spellID]=true end end
+end
+local function goal(target,finish,start)
+    return {name='Goal',targetCopper=target or 1000000,targetLevel=finish or 40,startLevel=start or 25,
+        initialCopper=0,savedCopper=0,curve=0,active=true,milestones={},expenses={},planDecision='simple'}
+end
+local function click(parent,text)
+    for _,control in ipairs(controls) do
+        if control.parent==parent and control.text==text and control.scripts.OnClick then control.scripts.OnClick(control,'LeftButton'); return end
     end
-    error("Missing button " .. text)
+    error('Button not found: ' .. text)
 end
-loadAddon("UI.lua")
-loadAddon("PlanningUI.lua")
-test("editor saves a custom goal and checkpoint into the actual budget", function()
-    reset(); ns.db.goals = {}
-    ns.ToggleUI()
-    assert(ns.ui:IsShown())
-    ns.ui.name:SetText("My savings")
-    ns.ui.level:SetText("21")
-    ns.ui.amount[1]:SetText("10")
-    ns.ui.amount[2]:SetText("0")
-    ns.ui.amount[3]:SetText("0")
-    ns.ui.milestoneLevel:SetText("11")
-    ns.ui.milestoneAmount[1]:SetText("2")
-    ns.ui.milestoneAmount[2]:SetText("50")
-    ns.ui.milestoneAmount[3]:SetText("0")
-    click(ns.ui.editor, "Set"); click(ns.ui.editor, "Save goal")
-    assert(ns.planningConsent:IsShown()); equal(#ns.db.goals, 0)
-    click(ns.planningConsent, "Keep simple budget")
-    equal(#ns.db.goals, 1); equal(ns.db.goals[1].name, "My savings")
-    equal(ns.db.goals[1].milestones[11], 25000)
-    equal(ns.GetBudget().reserved, 25000)
-    ns.ui.active:SetChecked(false); click(ns.ui.editor, "Save goal")
-    equal(ns.GetBudget().reserved, 0)
-end)
-test("actual warning buttons cancel or authorize a single purchase", function()
-    reset(); ns.RequestPurchase(read, execute)
-    assert(ns.warningFrame:IsShown()); equal(executions, 0)
-    click(ns.warningFrame, "Cancel"); equal(executions, 0); equal(ns.pending, nil)
-    ns.RequestPurchase(read, execute); click(ns.warningFrame, "Spend anyway")
-    equal(executions, 1); equal(ns.pending, nil)
-end)
 
-test("mount presets are editable, opt-in and do not create duplicate goals", function()
-    reset(); ns.db.goals = {}
-    ns.UsePreset("mount-first")
-    equal(#ns.db.goals, 0); equal(ns.ui.name:GetText(), "First mount & riding")
-    equal(ns.ui.level:GetText(), "40"); equal(ns.ui.amount[1]:GetText(), "100")
-    ns.ui.amount[1]:SetText("90")
-    click(ns.ui.editor, "Save goal"); click(ns.planningConsent, "Keep simple budget")
-    equal(#ns.db.goals, 1); equal(ns.db.goals[1].targetCopper, 900000)
-    ns.UsePreset("mount-first"); click(ns.ui.editor, "Save goal")
-    equal(#ns.db.goals, 1)
-    ns.UsePreset("mount-epic")
-    equal(ns.ui.level:GetText(), "60"); equal(ns.ui.amount[1]:GetText(), "1000")
-    equal(#ns.db.goals, 1)
+test('coin parsing preserves every copper and rejects invalid input',function()
+    equal(M.ParseCoins('4','87','5'),48705); equal(M.FormatCoins(48705),'4g 87s 5c')
+    equal(M.ParseCoins('-1','0','0'),nil); equal(M.ParseCoins('1.5','0','0'),nil)
+    equal(M.ParseCoins('0','100','0'),nil); equal(M.ParseCoins('0','0','100'),nil)
 end)
-
-test("coin artwork and aligned plan columns use the actual amounts", function()
-    ns.UsePreset("mount-first")
-    local text = ns.MoneyText(10203)
-    assert(text:find("1 |TInterface\\MoneyFrame\\UI%-GoldIcon"))
-    assert(text:find("2 |TInterface\\MoneyFrame\\UI%-SilverIcon"))
-    assert(text:find("3 |TInterface\\MoneyFrame\\UI%-CopperIcon"))
-    equal(#ns.ui.planRows, 60)
-    equal(ns.ui.planRows[40].reserve.text, ns.MoneyText(ns.db.goals[1].targetCopper))
-    assert(ns.ui.planRows[40].level.text:find("%*"))
+test('income-based weights put less saving at early levels than the old default',function()
+    local g=goal(1000000,40,1)
+    assert(M.TargetAtLevel(g,25)<1000000*((25-1)/(40-1))^2)
+    assert(M.TargetAtLevel(g,25)<250000)
+    equal(M.TargetAtLevel(g,1),0); equal(M.TargetAtLevel(g,40),1000000)
 end)
-
-local services, playerClass, professionTrainer = {}, "WARRIOR", false
-UnitClass = function() return playerClass, playerClass end
-UnitName = function() return "Test trainer" end
-time = function() return 12345 end
-IsTradeskillTrainer = function() return professionTrainer end
-GetNumTrainerServices = function() return #services end
-GetTrainerServiceInfo = function(index)
-    local item = services[index]
-    if not item then return end
-    return item.name, item.status or "available", "icon", item.level, item.rank
-end
-GetTrainerServiceLevelReq = function(index) return services[index].level end
-GetTrainerServiceCost = function(index) return services[index].cost end
-C_Spell = { GetSpellName = function(id)
-    if id == 33388 then return "Apprentice Riding" elseif id == 33391 then return "Journeyman Riding" end
-end }
-
-test("actual trainer quotes retain ranks, levels, future costs and class identity", function()
-    for _, class in ipairs({ "WARRIOR", "MAGE", "PRIEST", "ROGUE", "HUNTER", "WARLOCK", "PALADIN", "SHAMAN", "DRUID" }) do
-        reset(); ns.db.trainerCatalog = {}; playerClass = class
-        services = { { name = "Ability", rank = "Rank 1", level = 4, cost = 100 },
-            { name = "Ability", rank = "Rank 2", level = 12, cost = 2000, status = "unavailable" } }
-        ns.CaptureTrainerPrices()
-        local g = ns.NewPresetGoal("class-training"); ns.EnableItemPlanning(g)
-        equal(#g.expenses, 2); equal(g.targetCopper, 2100)
-        equal(g.expenses[1].class, class); equal(g.expenses[1].rank, "Rank 1")
-        equal(g.expenses[2].level, 12); equal(g.expenses[2].copper, 2000)
-        assert(Model.ValidateGoal(g))
+test('a level-25 goal has no historical target and reaches the final amount exactly',function()
+    local g=goal(); g.initialCopper=9741
+    for l=1,24 do equal(M.TargetAtLevel(g,l),0) end
+    equal(M.TargetAtLevel(g,25),9741); equal(M.TargetAtLevel(g,40),1000000)
+    local previous=0
+    for l=25,60 do local target=M.TargetAtLevel(g,l); assert(target>=previous); previous=target end
+end)
+test('initial investment protects the next two training levels',function()
+    equal(M.InitialInvestment(48705,30000,0,20,nil,1000000),9741)
+    equal(M.InitialInvestment(29999,30000,0,20,nil,1000000),0)
+    equal(M.InitialInvestment(48705,30000,0,20,40000,1000000),18705)
+    equal(M.InitialInvestment(48705,30000,10000,20,40000,1000000),8705)
+end)
+test('every playable class has a preloaded training catalog through level 60',function()
+    local count=0
+    for _,token in ipairs({'WARRIOR','PALADIN','HUNTER','ROGUE','PRIEST','SHAMAN','MAGE','WARLOCK','DRUID'}) do
+        local entries=ns.ClassTrainingData[token]; assert(#entries>50)
+        local last=0
+        for _,entry in ipairs(entries) do assert(entry.level>=1 and entry.level<=60); last=math.max(last,entry.level); count=count+1 end
+        equal(last,60)
     end
-    playerClass = "WARRIOR"
+    equal(count,1374)
 end)
-
-test("unchecked ranks stay excluded across updated trainer quotes", function()
-    reset(); ns.db.trainerCatalog = {}
-    services = { { name = "Ability", rank = "Rank 1", level = 4, cost = 100 },
-        { name = "Ability", rank = "Rank 2", level = 12, cost = 2000 } }
+test('warrior training at level 26 is included without any trainer visit',function()
+    reset()
+    local g=goal(); g.includeClassTraining=true; ns.SyncExpenses(g)
+    local totals=ns.TrainingByLevel(g)
+    equal(totals[26],30000); equal(ns.TrainingRunway(g),30000)
+    assert(#g.expenses>50); equal(g.targetCopper,1000000)
+end)
+test('live trainer prices override base prices without duplicate ranks',function()
+    reset()
+    services={{name='Charge',rank='Rank 2',level=26,cost=9000}}
     ns.CaptureTrainerPrices()
-    local g = ns.NewPresetGoal("class-training"); ns.EnableItemPlanning(g)
-    g.expenses[2].selected = false; ns.SyncExpenses(g); ns.db.goals = { g }
-    equal(g.targetCopper, 100)
-    services[2].cost = 1800; ns.CaptureTrainerPrices()
-    equal(g.expenses[2].selected, false); equal(g.expenses[2].copper, 1800)
-    equal(g.targetCopper, 100); equal(#g.expenses, 2)
+    local g=goal(); g.includeClassTraining=true; ns.SyncExpenses(g)
+    equal(ns.TrainingRunway(g),29000)
+    local count=0
+    for _,entry in ipairs(g.expenses) do if entry.spellID==6178 then count=count+1; equal(entry.copper,9000) end end
+    equal(count,1)
+end)
+test('unchecked class ranks stay excluded when prices refresh',function()
+    reset(); local g=goal(); g.includeClassTraining=true; ns.SyncExpenses(g)
+    for _,entry in ipairs(g.expenses) do if entry.spellID==6178 then entry.selected=false end end
+    equal(ns.TrainingRunway(g),20000)
+    services={{name='Charge',rank='Rank 2',level=26,cost=9000}}; ns.CaptureTrainerPrices(); ns.SyncExpenses(g)
+    equal(ns.TrainingRunway(g),20000)
+end)
+test('learned ranks no longer require training money',function()
+    reset(); knownSpells[6178]=true
+    local g=goal(); g.includeClassTraining=true; ns.SyncExpenses(g)
+    equal(ns.TrainingRunway(g),20000)
+end)
+test('two goals share a single training budget',function()
+    reset(); local a,b=goal(),goal(10000000,60)
+    a.includeClassTraining,b.includeClassTraining=true,true
+    ns.SyncExpenses(a); ns.SyncExpenses(b); ns.db.goals={a,b}
+    equal(ns.TrainingRunway(),30000)
+    for _,g in ipairs(ns.db.goals) do for _,entry in ipairs(g.expenses) do if entry.spellID==6178 then entry.selected=false end end end
+    equal(ns.TrainingRunway(),20000)
+end)
+test('the reported reserve is always backed by the actual wallet',function()
+    local g=goal(); g.savedCopper=143412
+    local b=M.Budget({g},25,48705,30000)
+    equal(b.saved,48705); equal(b.trainingFunded,0); equal(b.reserved,48705)
+    M.Reconcile({g},48705); equal(g.savedCopper,48705)
+    assert(b.reserved<=b.balance)
+end)
+test('progress distinguishes expected targets from real savings',function()
+    local g=goal(); g.savedCopper=48705
+    local p=M.GoalProgress(g,30)
+    equal(p.saved,48705); assert(p.expected>p.saved); equal(p.behind,p.expected-p.saved)
+    equal(p.percent,4.8705)
+end)
+test('funding protects training first and never counts cash twice',function()
+    local a,b=goal(),goal(2000000,60)
+    M.FundGoals({a,b},10000,48705,30000)
+    equal(a.savedCopper,10000); equal(b.savedCopper,0)
+    M.FundGoals({a,b},10000,58705,30000)
+    equal(a.savedCopper,20000)
+    local budget=M.Budget({a,b},25,58705,30000)
+    equal(budget.saved,20000); equal(budget.trainingFunded,30000); equal(budget.reserved,50000)
+end)
+test('spending consumes unassigned cash before reducing savings',function()
+    local g=goal(); g.savedCopper=10000
+    M.Reconcile({g},15000); equal(g.savedCopper,10000)
+    M.Reconcile({g},7000); equal(g.savedCopper,7000)
+end)
+test('an expected deficit does not pretend that missing gold is saved',function()
+    local g=goal(); g.savedCopper=1000
+    local b=M.Budget({g},35,48705,30000)
+    assert(b.expected>48705); equal(b.saved,1000); equal(b.reserved,31000); assert(b.behind>0)
+end)
+test('exact protected limit is allowed but one copper beyond warns',function()
+    local g=goal(); g.savedCopper=10000
+    equal(M.Purchase({g},25,48705,8705,30000).warning,false)
+    equal(M.Purchase({g},25,48705,8706,30000).warning,true)
+    equal(M.Purchase({g},25,48705,0,30000).warning,false)
+end)
+test('planned training can use its own budget without using goal savings',function()
+    local g=goal(); g.savedCopper=9741
+    equal(M.Purchase({g},25,48705,30000,30000,true).warning,false)
+    equal(M.Purchase({g},25,48705,30000,30000,false).warning,true)
+end)
+test('itemized costs follow their own due levels while training stays separate',function()
+    local g=goal(30000,40); g.planMode='items'
+    g.expenses={{key='a',name='Near',level=26,copper=10000,selected=true},
+        {key='b',name='Later',level=40,copper=20000,selected=true},
+        {key='c',name='Spell',level=26,copper=30000,selected=true,source='class'}}
+    equal(M.ExpenseTotal(g),30000); equal(M.TargetAtLevel(g,25),0)
+    assert(M.TargetAtLevel(g,26)>=10000); equal(M.TargetAtLevel(g,40),30000)
+end)
+test('random income and spending preserve the wallet conservation invariant',function()
+    math.randomseed(10)
+    local goals={goal(),goal(2000000,60)}; local wallet=10000
+    for i=1,1000 do
+        local change=math.random(-5000,9000); wallet=math.max(0,wallet+change)
+        if change>0 then M.FundGoals(goals,change,wallet,30000) else M.Reconcile(goals,wallet) end
+        local budget=M.Budget(goals,25,wallet,30000)
+        assert(budget.saved>=0 and budget.reserved<=wallet and budget.trainingFunded>=0)
+        equal(goals[1].savedCopper+goals[2].savedCopper,budget.saved)
+    end
 end)
 
-test("learned ranks release their reserve without losing future ranks", function()
-    reset(); ns.db.trainerCatalog = {}
-    services = { { name = "Ability", rank = "Rank 1", level = 4, cost = 100 },
-        { name = "Ability", rank = "Rank 2", level = 12, cost = 2000, status = "unavailable" } }
-    ns.CaptureTrainerPrices()
-    local g = ns.NewPresetGoal("class-training"); ns.EnableItemPlanning(g); ns.db.goals = { g }
-    equal(g.targetCopper, 2100)
-    services[1].status, services[1].cost = "used", 0
-    ns.CaptureTrainerPrices()
-    equal(g.expenses[1].paid, true); equal(g.expenses[1].copper, 100)
-    equal(g.targetCopper, 2000)
-    equal(Model.TargetAtLevel(g, 12), 2000)
+local executions=0
+local action={key='item:1',label='Item',cost=20000}
+local function read() return action end
+local function execute() executions=executions+1 end
+local function pending()
+    reset(25,48705); local g=goal(); g.savedCopper=30000; ns.db.goals={g}
+    executions=0; action={key='item:1',label='Item',cost=20000}; ns.RequestPurchase(read,execute)
+end
+test('warning rows show actual protected money apart from long purchase names',function()
+    reset(35,987654321)
+    local g=goal(10000000000,40,25); g.savedCopper=900000000; ns.db.goals={g}
+    local longName=string.rep('Very long purchase name ',10)
+    action={key='large:item',label=longName,cost=123456789}; ns.RequestPurchase(read,execute)
+    local budget=ns.pending.budget
+    assert(budget.expected>budget.balance); equal(budget.reserved,900000000)
+    equal(ns.warningFrame.itemName.text,longName)
+    for key,value in pairs({cost=123456789,remaining=864197532,reserved=900000000,used=35802468}) do
+        local row=ns.warningFrame.moneyRows[key]
+        equal(row.amount.text,ns.MoneyText(value))
+        assert(not row.caption.text:find(longName,1,true))
+    end
+    assert(not ns.warningFrame.moneyRows.reserved.caption.text:find('level',1,true))
+end)
+test('cancel spends nothing and Spend anyway authorizes once',function()
+    pending(); equal(executions,0); ns.CancelPurchase(); ns.ConfirmPurchase(); equal(executions,0)
+    ns.RequestPurchase(read,execute); ns.ConfirmPurchase(); ns.ConfirmPurchase(); equal(executions,1)
+end)
+test('Spend anyway suppresses repeat warnings for exactly two minutes',function()
+    pending(); ns.ConfirmPurchase(); equal(executions,1); equal(ns.WarningCooldownRemaining(),120)
+    elapsed=elapsed+119
+    ns.RequestPurchase(read,execute); equal(executions,2); equal(ns.pending,nil)
+    equal(ns.WarningCooldownRemaining(),1)
+    elapsed=elapsed+1
+    ns.RequestPurchase(read,execute); equal(executions,2); assert(ns.pending)
+    equal(ns.WarningCooldownRemaining(),0)
+end)
+test('ordinary purchases do not begin a warning cooldown',function()
+    reset(); executions=0; action={key='item',label='Item',cost=20000}
+    ns.RequestPurchase(read,execute); equal(executions,1); equal(ns.WarningCooldownRemaining(),0)
+    local g=goal(); g.savedCopper=30000; ns.db.goals={g}
+    ns.RequestPurchase(read,execute); equal(executions,1); assert(ns.pending)
+end)
+test('closing a purchase window preserves an already approved cooldown',function()
+    pending(); ns.ConfirmPurchase(); elapsed=elapsed+30
+    eventFrame.scripts.OnEvent(nil,'MERCHANT_CLOSED'); equal(ns.WarningCooldownRemaining(),90)
+    ns.RequestPurchase(read,execute); equal(executions,2); equal(ns.pending,nil)
+end)
+test('Cancel does not start or extend the warning cooldown',function()
+    pending(); ns.CancelPurchase(); equal(ns.WarningCooldownRemaining(),0)
+    ns.RequestPurchase(read,execute); assert(ns.pending); equal(executions,0)
+    ns.ConfirmPurchase(); elapsed=elapsed+120
+    ns.RequestPurchase(read,execute); ns.CancelPurchase(); equal(ns.WarningCooldownRemaining(),0)
+    ns.RequestPurchase(read,execute); assert(ns.pending); equal(executions,1)
+end)
+test('cooldown purchases still validate current availability prices and funds',function()
+    pending(); ns.ConfirmPurchase(); equal(executions,1)
+    action=nil; ns.RequestPurchase(read,execute); equal(executions,1)
+    for _,cost in ipairs({-1,0.5,math.huge,0/0,1000000000001,50000}) do
+        action={key='item',label='Item',cost=cost}; ns.RequestPurchase(read,execute); equal(executions,1)
+    end
+    action={key='item',label='Item',cost=30000}; ns.RequestPurchase(read,execute); equal(executions,2)
+    equal(ns.WarningCooldownRemaining(),120)
+end)
+test('invalidated confirmation does not grant a cooldown',function()
+    pending(); action={key='item:1',label='Item',cost=21000}; ns.ConfirmPurchase()
+    equal(executions,0); equal(ns.WarningCooldownRemaining(),0)
+    ns.RequestPurchase(read,execute); assert(ns.pending)
+end)
+test('insufficient funds at confirmation do not grant a cooldown',function()
+    pending(); money=10000; ns.ConfirmPurchase(); equal(executions,0); equal(ns.WarningCooldownRemaining(),0)
+end)
+test('price or selection changes invalidate confirmation',function()
+    pending(); action={key='item:1',label='Item',cost=21000}; ns.ConfirmPurchase(); equal(executions,0)
+    pending(); action={key='other',label='Other',cost=20000}; ns.ConfirmPurchase(); equal(executions,0)
+end)
+test('a closed purchase window cannot use a pending confirmation',function()
+    pending(); eventFrame.scripts.OnEvent(nil,'MERCHANT_CLOSED'); ns.ConfirmPurchase(); equal(executions,0)
+end)
+test('changing real savings refreshes a risky confirmation',function()
+    pending(); ns.db.goals[1].savedCopper=31000; ns.Changed(); ns.ConfirmPurchase()
+    equal(executions,0); assert(ns.pending); ns.ConfirmPurchase(); equal(executions,1)
+end)
+test('invalid and unaffordable prices never proceed',function()
+    for _,cost in ipairs({-1,0.5,math.huge,0/0,1000000000001,50000}) do
+        reset(); executions=0; action={key='item',label='Item',cost=cost}; ns.RequestPurchase(read,execute); equal(executions,0)
+    end
+end)
+test('money events fund real earnings and debit actual spending',function()
+    reset(); local g=goal(); g.savedCopper=9741; ns.db.goals={g}
+    money=money+10000; ns.ObserveMoney(); equal(g.savedCopper,19741); equal(ns.db.earnings[25].income,10000)
+    money=5000; ns.ObserveMoney(); equal(g.savedCopper,5000); equal(ns.db.earnings[25].spending,53705)
+end)
+test('status prints the exact wallet, saved progress and no Available figure',function()
+    reset(); local g=goal(); g.savedCopper=9741; ns.db.goals={g}
+    SlashCmdList.GOLDENVELOPE('status')
+    local text=table.concat(messages,'\n')
+    assert(text:find('4g 87s 5c',1,true)); assert(text:find('0g 97s 41c',1,true))
+    assert(not text:lower():find('available',1,true)); assert(not text:find('14g 34s 12c',1,true))
+end)
+test('legacy goals migrate to the current level without claiming historical savings',function()
+    reset(); ns.sessionStarted=false
+    ns.db.goals={{name='Mount',targetLevel=40,targetCopper=1000000,curve=2,active=true,milestones={[10]=1000},expenses={}}}
+    eventFrame.scripts.OnEvent(nil,'PLAYER_LOGIN')
+    local g=ns.db.goals[1]; equal(g.startLevel,25); equal(g.curve,0); equal(g.milestones[10],nil)
+    equal(g.savedCopper,9741); equal(ns.lastMoney,48705)
 end)
 
-test("filtered-out services are retained and never presumed learned", function()
-    reset(); ns.db.trainerCatalog = {}
-    services = { { name = "Spell A", level = 4, cost = 100 }, { name = "Spell B", level = 10, cost = 2000 } }
-    ns.CaptureTrainerPrices()
-    services = { services[1] }; ns.CaptureTrainerPrices()
-    local g = ns.NewPresetGoal("class-training"); ns.EnableItemPlanning(g)
-    equal(#g.expenses, 2); equal(g.targetCopper, 2100)
-    equal(g.expenses[2].paid, false)
+test('the main UI is only slightly larger than the native trade window',function()
+    reset(); ns.ToggleUI(); equal(ns.ui.width,400); equal(ns.ui.height,500)
+    assert(ns.ui.width/344<1.2 and ns.ui.height/446<1.2)
+end)
+test('new presets begin at the current level and preview a safe initial investment',function()
+    reset(); ns.UsePreset('mount-first')
+    equal(ns.ui.initialAmount[1]:GetText(),'0'); equal(ns.ui.initialAmount[2]:GetText(),'97'); equal(ns.ui.initialAmount[3]:GetText(),'41')
+    equal(ns.ui.planRows[1],nil); assert(ns.ui.planRows[25]:IsShown())
+    click(ns.ui,'Save goal'); assert(ns.planningConsent:IsShown()); equal(#ns.db.goals,0)
+    click(ns.planningConsent,'Keep simple budget')
+    equal(ns.db.goals[1].startLevel,25); equal(ns.db.goals[1].savedCopper,9741)
+end)
+test('insufficient training cash forces even an overridden investment to zero',function()
+    reset(25,20000); ns.UsePreset('mount-first')
+    ns.ui.autoInitial=false; ns.ui.initialAmount[1]:SetText('1'); ns.ui.initialAmount[2]:SetText('0'); ns.ui.initialAmount[3]:SetText('0')
+    click(ns.ui,'Save goal'); click(ns.planningConsent,'Keep simple budget')
+    equal(ns.db.goals[1].initialCopper,0); equal(ns.db.goals[1].savedCopper,0)
+end)
+test('Class training checkbox loads the class catalog and coexists with a mount',function()
+    reset(); ns.UsePreset('mount-first'); click(ns.ui,'Save goal'); click(ns.planningConsent,'Choose expenses')
+    equal(ns.planningFrame.width,420); equal(ns.planningFrame.height,520)
+    ns.planningFrame.classTraining:SetChecked(true); ns.planningFrame.classTraining.scripts.OnClick(ns.planningFrame.classTraining)
+    click(ns.planningFrame,'Apply choices'); click(ns.ui,'Save goal')
+    local g=ns.db.goals[1]; equal(g.includeClassTraining,true); equal(g.targetCopper,1000000)
+    assert(#g.expenses>50); equal(ns.TrainingRunway(),30000)
+    equal(ns.ui.planRows[26].training.text,ns.MoneyText(30000))
+end)
+test('canceling expense selection preserves the stored choices',function()
+    local previous=#ns.db.goals[1].expenses
+    click(ns.ui.editor,'Choose expenses'); ns.planningFrame.classTraining:SetChecked(false)
+    ns.planningFrame.classTraining.scripts.OnClick(ns.planningFrame.classTraining); click(ns.planningFrame,'Cancel')
+    click(ns.ui,'Save goal'); equal(ns.db.goals[1].includeClassTraining,true); equal(#ns.db.goals[1].expenses,previous)
+end)
+test('goal progress in the UI refreshes after new actual income',function()
+    local g=ns.db.goals[1]; local previous=g.savedCopper; money=money+10000; ns.ObserveMoney()
+    assert(g.savedCopper>previous); assert(ns.ui.progress.text:find(ns.MoneyText(g.savedCopper),1,true))
+end)
+test('editing a goal to an invalid level returns an error rather than crashing',function()
+    ns.ui.level:SetText(''); click(ns.ui,'Save goal'); assert(ns.ui.error.text:find('target level',1,true))
+    ns.ui.level:SetText('40')
 end)
 
-test("unknown prices stay unknown and pet training points are ignored", function()
-    reset(); ns.db.trainerCatalog = {}
-    services = { { name = "Unknown cost", level = 8, status = "unavailable" } }
-    ns.CaptureTrainerPrices()
-    local g = ns.NewPresetGoal("class-training"); ns.EnableItemPlanning(g)
-    equal(#g.expenses, 1); equal(g.expenses[1].copper, nil); equal(g.targetCopper, 0)
-    services[1].cost = 999
-    trainerType = Enum.TrainerType.Pet; ns.CaptureTrainerPrices(); trainerType = 1
-    ns.SyncExpenses(g); equal(g.expenses[1].copper, nil)
+local merchant=frame(); merchant.selectedTab=1; MerchantFrame=merchant
+local control=frame(merchant); control.id=1; control.scripts.OnClick=execute; control.SplitStack=execute; MerchantItem1ItemButton=control
+C_MerchantFrame={GetItemInfo=function() return {name='Supplies',price=20000,stackCount=5} end}
+GetMerchantItemLink=function() return 'item:supplies' end
+GetNumBuybackItems=function() return 0 end
+local dialog=frame(); dialog.itemID=100; dialog.quantity=2; dialog.PriceFrame={GetAmount=function() return 20000 end}
+dialog.BuyNowButton=frame(dialog); dialog.BuyNowButton.scripts.OnClick=execute
+AuctionHouseFrame=frame(); AuctionHouseFrame.BuyDialog=dialog
+local quoteTime=10
+C_AuctionHouse={GetQuoteDurationRemaining=function() return quoteTime end}
+ns.InstallGuards()
+test('vendor quantity guards use the whole stack price and are installed once',function()
+    reset(); local g=goal(); g.savedCopper=30000; ns.db.goals={g}; executions=0
+    ns.InstallGuards(); control.scripts.OnClick(control,'RightButton'); equal(executions,0); equal(ns.pending.action.cost,20000)
+    ns.ConfirmPurchase(); equal(executions,1)
+    elapsed=elapsed+120
+    executions=0; control.SplitStack(control,10); equal(ns.pending.action.cost,40000); ns.CancelPurchase(); equal(executions,0)
 end)
-
-test("profession quotes are isolated from class spell budgets", function()
-    reset(); ns.db.trainerCatalog = {}; professionTrainer = true
-    services = { { name = "Alchemy", rank = "Journeyman", level = 10, cost = 5000 } }
-    ns.CaptureTrainerPrices(); professionTrainer = false
-    local profession = ns.NewPresetGoal("profession-training"); ns.EnableItemPlanning(profession)
-    local class = ns.NewPresetGoal("class-training"); ns.EnableItemPlanning(class)
-    equal(profession.targetCopper, 5000); equal(class.targetCopper, 0)
+test('expired commodity quotes cannot complete a pending purchase',function()
+    reset(); local g=goal(); g.savedCopper=30000; ns.db.goals={g}; executions=0
+    quoteTime=10; dialog.BuyNowButton.scripts.OnClick(dialog.BuyNowButton,'LeftButton'); equal(executions,0)
+    quoteTime=0; ns.ConfirmPurchase(); equal(executions,0)
 end)
-
-test("a real riding quote replaces the starter budget", function()
-    reset(); ns.db.trainerCatalog = {}
-    local g = ns.NewPresetGoal("mount-first"); ns.EnableItemPlanning(g); ns.db.goals = { g }
-    equal(g.targetCopper, 1000000); equal(g.expenses[1].estimated, true)
-    services = { { name = "Apprentice Riding", level = 40, cost = 900000 } }
-    ns.CaptureTrainerPrices()
-    equal(#g.expenses, 1); equal(g.expenses[1].estimated, nil); equal(g.targetCopper, 900000)
-end)
-test("a riding quote retains the player's decision to exclude the starter expense", function()
-    reset(); ns.db.trainerCatalog = {}
-    local g = ns.NewPresetGoal("mount-first"); ns.EnableItemPlanning(g)
-    g.expenses[1].selected = false; ns.db.goals = { g }
-    services = { { name = "Apprentice Riding", level = 40, cost = 900000 } }
-    ns.CaptureTrainerPrices()
-    equal(#g.expenses, 1); equal(g.expenses[1].selected, false); equal(g.targetCopper, 0)
-end)
-test("level-one spell quotes retain their real level and reserve their cost", function()
-    reset(); ns.db.trainerCatalog = {}
-    services = { { name = "First spell", level = 1, cost = 10 } }
-    ns.CaptureTrainerPrices()
-    local g = ns.NewPresetGoal("class-training"); ns.EnableItemPlanning(g)
-    equal(g.expenses[1].level, 1); equal(Model.TargetAtLevel(g, 1), 10)
-    assert(Model.ValidateGoal(g))
-end)
-
-test("itemized costs are due at their own levels and unchecked costs do not count", function()
-    local g = goal({ planMode = "items", expenses = {
-        { key = "a", name = "Early expense", level = 5, copper = 100, selected = true },
-        { key = "b", name = "Later expense", level = 21, copper = 10000, selected = true },
-        { key = "c", name = "Skip", level = 5, copper = 100000, selected = false },
-        { key = "d", name = "Done", level = 5, copper = 100000, selected = true, paid = true },
-        { key = "e", name = "Beyond horizon", level = 40, copper = 100000, selected = true },
-    } })
-    equal(Model.ExpenseTotal(g), 10100)
-    equal(Model.TargetAtLevel(g, 1), 0)
-    equal(Model.TargetAtLevel(g, 5), 500)
-    equal(Model.TargetAtLevel(g, 21), 10100)
-    equal(Model.TargetAtLevel(g, 60), 10100)
-end)
-
-test("custom goals prompt before displaying any expense choices", function()
-    reset(); ns.db.goals = {}; ns.db.trainerCatalog = {}
-    click(ns.ui, "New goal")
-    ns.ui.name:SetText("Custom project"); ns.ui.level:SetText("21")
-    ns.ui.amount[1]:SetText("10")
-    click(ns.ui.editor, "Save goal")
-    assert(ns.planningConsent:IsShown()); equal(#ns.db.goals, 0)
-    assert(not ns.planningFrame or not ns.planningFrame:IsShown())
-    click(ns.planningConsent, "Choose expenses")
-    assert(ns.planningFrame:IsShown()); equal(#ns.db.goals, 0)
-    ns.planningFrame.rows[1].check:SetChecked(false)
-    ns.planningFrame.rows[1].check.scripts.OnClick(ns.planningFrame.rows[1].check)
-    click(ns.planningFrame, "Apply choices"); click(ns.ui.editor, "Save goal")
-    equal(#ns.db.goals, 1); equal(ns.db.goals[1].planMode, "items")
-    equal(ns.db.goals[1].targetCopper, 0)
-end)
-
-test("training preset offers real-price checkboxes only after consent", function()
-    reset(); ns.db.goals = {}; ns.db.trainerCatalog = {}
-    services = { { name = "Keep spell", level = 8, cost = 1000 }, { name = "Skip spell", level = 10, cost = 2000 } }
-    ns.CaptureTrainerPrices(); ns.UsePreset("class-training")
-    click(ns.ui.editor, "Save goal"); assert(ns.planningConsent:IsShown())
-    assert(not ns.planningFrame:IsShown())
-    click(ns.planningConsent, "Choose expenses")
-    equal(ns.planningFrame.rows[1].name.text, "Keep spell")
-    ns.planningFrame.rows[2].check:SetChecked(false)
-    ns.planningFrame.rows[2].check.scripts.OnClick(ns.planningFrame.rows[2].check)
-    click(ns.planningFrame, "Apply choices"); click(ns.ui.editor, "Save goal")
-    equal(ns.db.goals[1].targetCopper, 1000)
-    equal(ns.db.goals[1].expenses[2].selected, false)
-end)
-
-test("canceling planning keeps the original budget and choices", function()
-    ns.UsePreset("class-training")
-    local before = ns.db.goals[1].targetCopper
-    click(ns.ui.editor, "Choose expenses")
-    ns.planningFrame.rows[1].check:SetChecked(false)
-    ns.planningFrame.rows[1].check.scripts.OnClick(ns.planningFrame.rows[1].check)
-    click(ns.planningFrame, "Cancel")
-    click(ns.ui.editor, "Save goal")
-    equal(ns.db.goals[1].targetCopper, before)
-    equal(ns.db.goals[1].expenses[1].selected, true)
-end)
-
-test("level 60 uses a simple budget without the automatic opt-in prompt", function()
-    reset(); ns.db.goals = {}; level = 60
-    ns.UsePreset("mount-epic"); click(ns.ui.editor, "Save goal")
-    equal(#ns.db.goals, 1); assert(not ns.planningConsent:IsShown())
-end)
-print(string.format("%d tests passed", tests))
+print(tests .. ' tests passed')

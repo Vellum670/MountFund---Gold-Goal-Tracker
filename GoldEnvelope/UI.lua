@@ -13,7 +13,7 @@ function ns.MoneyText(amount)
     local values = { Model.SplitCoins(amount) }
     local parts = {}
     for i = 1, 3 do
-        parts[i] = values[i] .. " |T" .. coinTextures[i] .. ":14:14:1:0|t"
+        if values[i] > 0 or (i == 3 and #parts == 0) then parts[#parts + 1] = values[i] .. " |T" .. coinTextures[i] .. ":12:12:1:0|t" end
     end
     return table.concat(parts, "  ")
 end
@@ -52,11 +52,11 @@ end
 local function coins(parent, x, y)
     local controls = {}
     for i, part in ipairs({ "Gold", "Silver", "Copper" }) do
-        local fieldX = x + (i - 1) * 90
-        controls[i] = edit(parent, fieldX, y, 55, "", true)
+        local fieldX = x + (i - 1) * 64
+        controls[i] = edit(parent, fieldX, y, 38, "", true)
         local icon = parent:CreateTexture(nil, "ARTWORK")
         icon:SetSize(16, 16)
-        icon:SetPoint("TOPLEFT", fieldX + 61, y - 4)
+        icon:SetPoint("TOPLEFT", fieldX + 43, y - 4)
         icon:SetTexture(coinTextures[i])
         controls[i]:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
@@ -120,11 +120,24 @@ local function readEditor(skipValidation)
     local goal = copyGoal(draft)
     goal.name = ui.name:GetText():match("^%s*(.-)%s*$")
     goal.targetLevel = tonumber(ui.level:GetText())
+    if not goal.targetLevel or goal.targetLevel ~= math.floor(goal.targetLevel) or goal.targetLevel < 2 or goal.targetLevel > 60 then
+        return nil, "Choose a target level from 2 to 60."
+    end
     local amount, errorText = getCoins(ui.amount)
     if not amount then return nil, errorText end
     goal.targetCopper = amount
     goal.active = ui.active:GetChecked() and true or false
-    if goal.planMode == "items" then ns.SyncExpenses(goal) end
+    if not ns.db.goals[selected] then
+        goal.startLevel, goal.savedCopper = nil, nil
+        goal.initialPercent = tonumber(ui.initialPercent:GetText()) or 20
+        if goal.initialPercent < 0 or goal.initialPercent > 100 then return nil, "Initial percent must be from 0 to 100." end
+        if not ui.autoInitial then
+            local initial, errorText = getCoins(ui.initialAmount)
+            if not initial then return nil, errorText end
+            goal.initialOverrideCopper = initial
+        else goal.initialOverrideCopper = nil end
+    end
+    ns.PrepareGoal(goal, ns.db.goals[selected])
     if not skipValidation then
         local valid, validationError = Model.ValidateGoal(goal)
         if not valid then return nil, validationError end
@@ -135,285 +148,217 @@ end
 local function renderPlan(goal)
     local ui = ns.ui
     ui.planRows = ui.planRows or {}
-    for _, row in ipairs(ui.planRows) do row:Hide() end
-    ui.planEmpty:SetShown(goal == nil)
-    if not goal then ui.planContent:SetHeight(1); return end
-    local currentLevel = UnitLevel("player")
-    for level = 1, Model.MAX_LEVEL do
+    for _, row in pairs(ui.planRows) do row:Hide() end
+    local training = goal.includeClassTraining and ns.TrainingByLevel(goal) or {}
+    local start, finish = goal.startLevel or UnitLevel("player"), math.max(goal.startLevel or 1, goal.targetLevel)
+    for level = start, finish do
         local row = ui.planRows[level]
         if not row then
             row = CreateFrame("Frame", nil, ui.planContent)
-            row:SetSize(580, 22)
-            row:SetPoint("TOPLEFT", 0, -(level - 1) * 22)
-            row.background = row:CreateTexture(nil, "BACKGROUND")
-            row.background:SetAllPoints()
-            row.level = label(row, "", 0, -3, 50, "GameFontHighlightSmall")
-            row.reserve = label(row, "", 62, -3, 258, "GameFontHighlightSmall")
-            row.addition = label(row, "", 332, -3, 246, "GameFontHighlightSmall")
+            row:SetSize(354, 37)
+            row.background = row:CreateTexture(nil, "BACKGROUND"); row.background:SetAllPoints()
+            row.level = label(row, "", 0, -5, 30, "GameFontHighlightSmall")
+            row.target = label(row, "", 36, -5, 157, "GameFontHighlightSmall")
+            row.addition = label(row, "", 36, -21, 157, "GameFontDisableSmall")
+            row.training = label(row, "", 204, -5, 145, "GameFontHighlightSmall")
             ui.planRows[level] = row
         end
-        local amount = Model.TargetAtLevel(goal, level)
-        local prior = Model.TargetAtLevel(goal, math.max(1, level - 1))
-        local checkpoint = goal.planMode ~= "items" and (goal.milestones[level] ~= nil or level == goal.targetLevel)
-        row.level:SetText(level .. (checkpoint and " *" or ""))
-        row.reserve:SetText(ns.MoneyText(amount))
-        row.addition:SetText("+ " .. ns.MoneyText(amount - prior))
-        row.background:SetColorTexture(0.65, 0.48, 0.22, level == currentLevel and 0.35 or (level % 2 == 0 and 0.07 or 0))
+        row:ClearAllPoints(); row:SetPoint("TOPLEFT", 0, -(level - start) * 37)
+        local target = Model.TargetAtLevel(goal, level)
+        local prior = level == start and 0 or Model.TargetAtLevel(goal, level - 1)
+        row.level:SetText(level)
+        row.target:SetText(ns.MoneyText(target))
+        row.addition:SetText((level == start and "Initial " or "+ ") .. ns.MoneyText(math.max(0,target-prior)))
+        row.training:SetText(ns.MoneyText(training[level] or 0))
+        row.background:SetColorTexture(0.65,0.48,0.22,level == UnitLevel("player") and 0.35 or (level % 2 == 0 and 0.07 or 0))
         row:Show()
     end
-    ui.planContent:SetHeight(Model.MAX_LEVEL * 22)
+    ui.planContent:SetHeight(math.max(1,(finish-start+1)*37))
+    ui.scroll:SetVerticalScroll(math.max(0,UnitLevel("player")-start-1)*37)
 end
 
 local refreshGoalList
-local function showEditor(presetGoal)
+local function showEditor(updated)
     if ns.ClosePlanningWindows then ns.ClosePlanningWindows() end
+    if ns.ui.goalPicker then ns.ui.goalPicker:Hide() end
     local ui = ns.ui
-    local goal = ns.db.goals[selected]
-    draft = presetGoal or (goal and copyGoal(goal)) or { name = "", targetLevel = 40, targetCopper = 0,
-        curve = 2, active = true, milestones = {} }
-    ui.selection:SetText(goal and ("Goal " .. selected .. " of " .. #ns.db.goals) or "New goal")
-    ui.name:SetText(draft.name)
-    ui.level:SetText(tostring(draft.targetLevel))
-    setCoins(ui.amount, draft.targetCopper)
-    ui.active:SetChecked(draft.active)
-    for _, control in ipairs(ui.amount) do
-        if draft.planMode == "items" then control:Disable() else control:Enable() end
+    local saved = ns.db.goals[selected]
+    draft = updated or (saved and copyGoal(saved)) or { name = "", targetLevel = math.min(60,math.max(40,UnitLevel("player")+1)),
+        targetCopper = 0, curve = 0, active = true, milestones = {}, expenses = {}, initialPercent = 20 }
+    ns.PrepareGoal(draft, saved)
+    ui.selection:SetText(draft.name ~= "" and draft.name or "New goal")
+    ui.name:SetText(draft.name); ui.level:SetText(tostring(draft.targetLevel))
+    setCoins(ui.amount,draft.targetCopper); ui.active:SetChecked(draft.active)
+    ui.initialPercent:SetText(tostring(draft.initialPercent or 20))
+    ui.autoInitial = draft.initialOverrideCopper == nil
+    setCoins(ui.initialAmount,draft.initialCopper or 0)
+    ui.curve:SetText(draft.curve == 0 and "Income-based schedule" or "Custom curve: " .. draft.curve)
+    for _, input in ipairs(ui.amount) do if draft.planMode == "items" then input:Disable() else input:Enable() end end
+    for _, input in ipairs(ui.initialAmount) do if saved then input:Disable() else input:Enable() end end
+    if saved then ui.initialPercent:Disable() else ui.initialPercent:Enable() end
+    ui.planning:SetText(draft.planMode == "items" and "Choose expenses" or "Customize expenses")
+    ui.delete:SetEnabled(saved ~= nil); ui.error:SetText("")
+    renderPlan(draft); ns.RefreshUI()
+end
+
+function ns.UsePreset(id)
+    local goal = ns.NewPresetGoal(id)
+    if not goal then return end
+    for index,existing in ipairs(ns.db.goals) do
+        if existing.presetID == id then selected=index; showEditor(); return end
     end
-    ui.curve:SetText("Savings curve: " .. draft.curve)
-    ui.milestoneLevel:SetText(tostring(math.min(UnitLevel("player"), draft.targetLevel - 1)))
-    setCoins(ui.milestoneAmount, 0)
-    ui.error:SetText("")
-    renderPlan((draft.targetCopper > 0 or draft.planMode == "items") and draft or nil)
-    local preset = ns.FindPreset(draft.presetID)
-    ui.presetHint:SetText(preset and preset.note or "")
-    ui.planning:SetText(draft.planMode == "items" and "Choose expenses" or "Customize planning")
-    ui.scroll:SetVerticalScroll(math.max(0, math.min(55, UnitLevel("player") - 3)) * 22)
-    ui.delete:SetEnabled(goal ~= nil)
-    ns.RefreshUI()
-    if refreshGoalList then refreshGoalList() end
+    selected=#ns.db.goals+1; showEditor(goal)
 end
 
 local function planCurrentGoal()
-    local goal, errorText = readEditor(true)
+    local goal,errorText=readEditor(true)
     if not goal then ns.ui.error:SetText(errorText); return end
-    if not goal.targetLevel or goal.targetLevel < 2 or goal.targetLevel > Model.MAX_LEVEL
-        or goal.targetLevel ~= math.floor(goal.targetLevel) then ns.ui.error:SetText("Choose a target level from 2 to 60 first."); return end
+    if not goal.targetLevel or goal.targetLevel < 2 or goal.targetLevel > 60 then ns.ui.error:SetText("Choose a target level from 2 to 60."); return end
     local function open()
         ns.EnableItemPlanning(goal)
-        ns.OpenExpensePlanner(goal, function(updated) showEditor(updated) end)
+        ns.OpenExpensePlanner(goal,function(updated) showEditor(updated) end)
     end
-    if goal.planMode == "items" then open() else
-        ns.AskGoalPlanning(goal, open, function()
-            goal.planDecision = "simple"; showEditor(goal)
-        end)
-    end
+    if goal.planMode == "items" then open() else ns.AskGoalPlanning(goal,open,function() goal.planDecision="simple"; showEditor(goal) end) end
 end
 
 local function saveCurrentGoal()
-    local goal, errorText = readEditor(true)
+    local goal,errorText=readEditor(true)
     if not goal then ns.ui.error:SetText(errorText); return end
     if not goal.name:match("%S") then ns.ui.error:SetText("Give your goal a name."); return end
-    if not goal.targetLevel or goal.targetLevel < 2 or goal.targetLevel > Model.MAX_LEVEL
-        or goal.targetLevel ~= math.floor(goal.targetLevel) then ns.ui.error:SetText("Choose a target level from 2 to 60."); return end
     local function save()
-        local valid, validationError = Model.ValidateGoal(goal)
-        if not valid then ns.ui.error:SetText(validationError); return end
-        ns.db.goals[selected] = goal
+        local valid,errorText=Model.ValidateGoal(goal)
+        if not valid then ns.ui.error:SetText(errorText); return end
+        ns.db.goals[selected]=goal; Model.Reconcile(ns.db.goals,GetMoney())
         ns.Changed(); showEditor(); ns.ui.error:SetText("Goal saved.")
     end
     if UnitLevel("player") < 60 and not goal.planDecision then
-        ns.AskGoalPlanning(goal, function()
-            ns.EnableItemPlanning(goal)
-            ns.OpenExpensePlanner(goal, function(updated) showEditor(updated) end)
-        end, function()
-            goal.planDecision = "simple"; draft.planDecision = "simple"; save()
-        end)
+        ns.AskGoalPlanning(goal,function()
+            ns.EnableItemPlanning(goal); ns.OpenExpensePlanner(goal,function(updated) showEditor(updated) end)
+        end,function() goal.planDecision="simple"; draft.planDecision="simple"; save() end)
     else save() end
 end
 
 function ns.CatalogChanged()
-    if draft and draft.planMode == "items" then
+    if draft then
         ns.SyncExpenses(draft)
-        setCoins(ns.ui.amount, draft.targetCopper)
-        renderPlan(draft)
+        setCoins(ns.ui.amount,draft.targetCopper); renderPlan(draft)
     end
     if ns.RefreshExpensePlanner then ns.RefreshExpensePlanner() end
 end
 
-function ns.UsePreset(id)
-    local presetGoal = ns.NewPresetGoal(id)
-    if not presetGoal then return end
-    for index, goal in ipairs(ns.db.goals) do
-        if goal.presetID == id then
-            selected = index
-            showEditor()
-            return
-        end
-    end
-    selected = #ns.db.goals + 1
-    showEditor(presetGoal)
-    ns.ui.error:SetText("Adjust the budget if needed, then click Save goal.")
-end
-
 function ns.RefreshUI()
     if not ns.ui or not ns.db then return end
-    local budget = ns.GetBudget()
-    ns.ui.summary:SetText("Level " .. UnitLevel("player") .. "  |  Balance: " .. ns.MoneyText(budget.balance)
-        .. "\nReserved today: " .. ns.MoneyText(budget.reserved)
-        .. "  |  Available to spend: " .. ns.MoneyText(budget.spendable)
-        .. (budget.shortfall > 0 and ("\nBehind today's plan by " .. ns.MoneyText(budget.shortfall)) or ""))
-    ns.ui.warnings:SetChecked(ns.db.warnings)
+    local ui,budget=ns.ui,ns.GetBudget()
+    ui.summary:SetText("Wallet " .. ns.MoneyText(budget.balance) .. "\nSaved " .. ns.MoneyText(budget.saved)
+        .. "  |  " .. (budget.behind > 0 and "Behind " or "Ahead ") .. ns.MoneyText(budget.behind > 0 and budget.behind or budget.ahead)
+        .. (not budget.trainingComplete and "\nSome training prices are unknown." or ""))
+    if draft then
+        if ns.db.goals[selected] then draft.savedCopper = ns.db.goals[selected].savedCopper end
+        local progress=Model.GoalProgress(draft,UnitLevel("player"))
+        if not ns.db.goals[selected] then
+            ui.progress:SetText("Initial allocation on save: " .. ns.MoneyText(draft.initialCopper or 0))
+        elseif draft.targetCopper == 0 and draft.includeClassTraining then
+            ui.progress:SetText("Training funded " .. ns.MoneyText(budget.trainingFunded) .. " / " .. ns.MoneyText(budget.trainingDue))
+        else
+            ui.progress:SetText(ns.MoneyText(progress.saved) .. " / " .. ns.MoneyText(progress.target) .. string.format("  %.1f%%",progress.percent))
+        end
+        renderPlan(draft)
+    end
+    ui.warnings:SetChecked(ns.db.warnings)
     if refreshGoalList then refreshGoalList() end
 end
 
-refreshGoalList = function()
-    local ui = ns.ui
-    if not ui or not ui.goalContent then return end
-    ui.goalRows = ui.goalRows or {}
-    for _, row in ipairs(ui.goalRows) do row:Hide() end
-    for index, goal in ipairs(ns.db.goals) do
-        local goalIndex = index
-        local row = ui.goalRows[index]
-        if not row then
-            row = CreateFrame("Button", nil, ui.goalContent)
-            row:SetSize(178, 48)
-            row:SetNormalTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
-            row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
-            row.name = label(row, "", 30, -5, 143, "GameFontHighlightSmall")
-            row.name:SetWordWrap(false)
-            row.level = label(row, "", 30, -26, 143, "GameFontNormalSmall")
-            row.icon = row:CreateTexture(nil, "ARTWORK")
-            row.icon:SetSize(22, 22)
-            row.icon:SetPoint("TOPLEFT", 4, -8)
-            ui.goalRows[index] = row
-        end
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", 0, -(index - 1) * 52)
-        row.name:SetText(goal.name)
-        row.level:SetText("Level " .. goal.targetLevel .. (goal.active and "" or "  (paused)"))
-        local preset = ns.FindPreset(goal.presetID)
-        row.icon:SetTexture(preset and preset.icon or "Interface\\Icons\\INV_Misc_Coin_01")
-        row:GetNormalTexture():SetAlpha(selected == index and 0.45 or 0.08)
-        row:SetScript("OnClick", function() selected = goalIndex; showEditor() end)
-        row:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetText(goal.name)
-            GameTooltip:AddLine("Reserved today: " .. ns.MoneyText(Model.TargetAtLevel(goal, UnitLevel("player"))))
-            GameTooltip:Show()
-        end)
-        row:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        row:Show()
+refreshGoalList=function()
+    local picker=ns.ui.goalPicker
+    if not picker then return end
+    picker.rows=picker.rows or {}
+    for _,row in ipairs(picker.rows) do row:Hide() end
+    for index,goal in ipairs(ns.db.goals) do
+        local choice=index
+        local row=picker.rows[index]
+        if not row then row=button(picker.content,"",0,0,260,function() end); picker.rows[index]=row end
+        row:ClearAllPoints(); row:SetPoint("TOPLEFT",0,-(index-1)*34)
+        row:SetText(goal.name .. " (" .. goal.targetLevel .. ")")
+        row:SetScript("OnClick",function() selected=choice; showEditor() end); row:Show()
     end
-    ui.goalContent:SetHeight(math.max(1, #ns.db.goals * 52))
-    ui.emptyGoals:SetShown(#ns.db.goals == 0)
+    picker.content:SetHeight(math.max(1,#ns.db.goals*34))
+end
+
+local function showGoalPicker()
+    local ui=ns.ui
+    if not ui.goalPicker then
+        local picker=window("GoldEnvelopeGoalPicker",310,360,"Your goals"); ui.goalPicker=picker
+        picker.scroll=CreateFrame("ScrollFrame",nil,picker,"UIPanelScrollFrameTemplate")
+        picker.scroll:SetPoint("TOPLEFT",20,-55); picker.scroll:SetSize(260,250)
+        picker.content=CreateFrame("Frame",nil,picker.scroll); picker.content:SetSize(260,1)
+        picker.scroll:SetScrollChild(picker.content)
+        button(picker,"Close",210,-320,75,function() picker:Hide() end)
+    end
+    refreshGoalList(); ui.goalPicker:Show()
 end
 
 local function createUI()
-    local ui = window("GoldEnvelopeWindow", 900, 680, "Gold Envelope")
-    ns.ui = ui
-    button(ui, "Close", 804, -15, 70, function() ui:Hide() end)
-    ui.summary = label(ui, "", 24, -58, 852, "GameFontHighlight")
-    label(ui, "Your goals", 24, -125, 180)
-    ui.goalScroll = CreateFrame("ScrollFrame", "GoldEnvelopeGoalScroll", ui, "UIPanelScrollFrameTemplate")
-    ui.goalScroll:SetPoint("TOPLEFT", 20, -154)
-    ui.goalScroll:SetSize(178, 388)
-    ui.goalContent = CreateFrame("Frame", nil, ui.goalScroll)
-    ui.goalContent:SetSize(178, 1)
-    ui.goalScroll:SetScrollChild(ui.goalContent)
-    ui.emptyGoals = label(ui, "No goals yet.\nChoose a preset or create your own.", 24, -162, 174, "GameFontHighlightSmall")
-    button(ui, "New goal", 24, -559, 174, function() selected = #ns.db.goals + 1; showEditor() end)
-    button(ui, "Presets", 24, -591, 174, function()
+    local ui=window("GoldEnvelopeWindow",400,500,"Gold Envelope"); ns.ui=ui
+    button(ui,"Close",326,-14,60,function() ui:Hide() end)
+    ui.summary=label(ui,"",16,-55,368,"GameFontHighlightSmall")
+    button(ui,"Goals",16,-103,75,showGoalPicker)
+    button(ui,"New",99,-103,55,function() selected=#ns.db.goals+1; showEditor() end)
+    button(ui,"Presets",162,-103,75,function()
         if not ui.presetPicker then
-            local count = #ns.Presets
-            local picker = window("GoldEnvelopePresetPicker", 360, 132 + count * 45, "Goal presets")
-            ui.presetPicker = picker
-            picker:SetFrameLevel(ui:GetFrameLevel() + 10)
-            for index, preset in ipairs(ns.Presets) do
-                local id = preset.id
-                local text = "|T" .. preset.icon .. ":18:18|t " .. preset.name
-                button(picker, text, 24, -56 - (index - 1) * 45, 312, function()
-                    picker:Hide(); ns.UsePreset(id)
-                end)
+            local count=#ns.Presets; local picker=window("GoldEnvelopePresetPicker",330,100+count*37,"Goal presets")
+            ui.presetPicker=picker
+            for index,preset in ipairs(ns.Presets) do
+                local id=preset.id
+                button(picker,"|T" .. preset.icon .. ":16:16|t " .. preset.name,16,-54-(index-1)*37,298,function() picker:Hide(); ns.UsePreset(id) end)
             end
-            label(picker, "Nothing is reserved until you save your goal.", 24, -60 - count * 45, 312, "GameFontHighlightSmall")
-            button(picker, "Close", 230, -98 - count * 45, 106, function() picker:Hide() end)
+            button(picker,"Close",234,-64-count*37,80,function() picker:Hide() end)
         end
-        if ui.presetPicker:IsShown() then ui.presetPicker:Hide() else ui.presetPicker:Show() end
+        ui.presetPicker:Show()
     end)
-    local editor = CreateFrame("Frame", nil, ui)
-    editor:SetPoint("TOPLEFT", 224, -120)
-    editor:SetSize(650, 512)
-    ui.editor = editor
-    ui.selection = label(editor, "", 12, -5, 600)
-    label(editor, "Goal name", 12, -45, 100)
-    ui.name = edit(editor, 128, -39, 480)
-    label(editor, "Save by level", 12, -82, 110)
-    ui.level = edit(editor, 128, -76, 60, "40", true)
-    ui.amount = coins(editor, 248, -76)
-    ui.active = CreateFrame("CheckButton", nil, editor, "UICheckButtonTemplate")
-    ui.active:SetPoint("TOPLEFT", 8, -111)
-    label(editor, "Reserve this goal (uncheck when ready to spend it)", 42, -119, 568, "GameFontHighlightSmall")
-    ui.presetHint = label(editor, "", 12, -140, 600, "GameFontHighlightSmall")
-    ui.curve = button(editor, "", 12, -163, 180, function()
-        draft.curve = draft.curve % 4 + 1
-        ui.curve:SetText("Savings curve: " .. draft.curve)
+    button(ui,"Plan / edit",245,-103,139,function()
+        local shown=ui.plan:IsShown()
+        ui.plan:SetShown(not shown); ui.editor:SetShown(shown)
+        if not shown then local goal=readEditor(true); if goal then renderPlan(goal) end end
     end)
-    label(editor, "1 = even saving; 2-4 = more saving later.", 208, -170, 405, "GameFontHighlightSmall")
-    ui.planning = button(editor, "Customize planning", 12, -196, 180, planCurrentGoal)
-    label(editor, "Optional: choose individual costs to include.", 208, -203, 405, "GameFontHighlightSmall")
-    label(editor, "Optional checkpoint: cumulative savings by level", 12, -239, 590)
-    ui.milestoneLevel = edit(editor, 18, -270, 55, "", true)
-    label(editor, "Level", 18, -253, 60, "GameFontNormalSmall")
-    ui.milestoneAmount = coins(editor, 98, -270)
-    button(editor, "Set", 384, -270, 85, function()
-        if draft.planMode == "items" then ui.error:SetText("Itemized plans use each expense's due level."); return end
-        local amount, coinError = getCoins(ui.milestoneAmount)
-        local level = tonumber(ui.milestoneLevel:GetText())
-        if not level or level ~= math.floor(level) or level < 2 or level > Model.MAX_LEVEL then
-            ui.error:SetText("Checkpoint level must be a whole number from 2 to 60."); return
-        end
-        if not amount then ui.error:SetText(coinError); return end
-        local previous = draft.milestones[level]
-        draft.milestones[level] = amount
-        local goal, errorText = readEditor()
-        if not goal then draft.milestones[level] = previous; ui.error:SetText(errorText); return end
-        renderPlan(goal); ui.error:SetText("Checkpoint set; click Save goal to keep changes.")
+    local editor=CreateFrame("Frame",nil,ui); editor:SetPoint("TOPLEFT",0,-139); editor:SetSize(400,290); ui.editor=editor
+    ui.selection=label(editor,"",16,-3,368)
+    ui.progress=label(editor,"",16,-25,368,"GameFontHighlightSmall")
+    label(editor,"Name",16,-58,70); ui.name=edit(editor,94,-52,274)
+    label(editor,"By level",16,-94,70); ui.level=edit(editor,94,-88,44,"40",true); ui.amount=coins(editor,172,-88)
+    ui.active=CreateFrame("CheckButton",nil,editor,"UICheckButtonTemplate"); ui.active:SetPoint("TOPLEFT",12,-118)
+    label(editor,"Track this goal",46,-126,300,"GameFontHighlightSmall")
+    label(editor,"Initial %",16,-159,80); ui.initialPercent=edit(editor,94,-153,44,"20",true)
+    label(editor,"Training for the next two levels comes first.",150,-160,224,"GameFontHighlightSmall")
+    label(editor,"Initial investment (edit to override)",16,-185,368,"GameFontNormalSmall")
+    ui.initialAmount=coins(editor,20,-209)
+    for _,input in ipairs(ui.initialAmount) do input:SetScript("OnTextChanged",function(_,userInput) if userInput then ui.autoInitial=false end end) end
+    button(editor,"Auto",236,-209,65,function()
+        if ns.db.goals[selected] then return end
+        draft.initialOverrideCopper=nil; draft.savedCopper=nil; draft.initialPercent=tonumber(ui.initialPercent:GetText()) or 20
+        ns.PrepareGoal(draft); ui.autoInitial=true; setCoins(ui.initialAmount,draft.initialCopper)
     end)
-    button(editor, "Remove", 478, -270, 100, function()
-        local level = tonumber(ui.milestoneLevel:GetText())
-        if level then draft.milestones[level] = nil end
-        local goal, errorText = readEditor()
-        ui.error:SetText(goal and "Checkpoint removed; click Save goal to keep changes." or errorText)
-        if goal then renderPlan(goal) end
+    ui.curve=button(editor,"Income-based schedule",16,-248,180,function()
+        draft.curve=(draft.curve+1)%5; ui.curve:SetText(draft.curve==0 and "Income-based schedule" or "Custom curve: " .. draft.curve)
     end)
-    label(editor, "Savings plan (* = checkpoint). Your current level is highlighted.", 12, -311, 610, "GameFontHighlightSmall")
-    label(editor, "Level", 13, -334, 50, "GameFontNormalSmall")
-    label(editor, "Reserved", 75, -334, 258, "GameFontNormalSmall")
-    label(editor, "Add This Level", 345, -334, 246, "GameFontNormalSmall")
-    ui.scroll = CreateFrame("ScrollFrame", "GoldEnvelopePlanScroll", editor, "UIPanelScrollFrameTemplate")
-    ui.scroll:SetPoint("TOPLEFT", 13, -355)
-    ui.scroll:SetSize(589, 106)
-    local content = CreateFrame("Frame", nil, ui.scroll)
-    content:SetSize(584, 1350)
-    ui.planContent = content
-    ui.planEmpty = label(editor, "Enter a final amount and save your goal to see its level plan.", 16, -361, 570, "GameFontHighlightSmall")
-    ui.scroll:SetScrollChild(content)
-    ui.error = label(editor, "", 12, -470, 620, "GameFontHighlightSmall")
-    ui.error:SetTextColor(1, 0.65, 0.35)
-    button(editor, "Save goal", 12, -507, 110, saveCurrentGoal)
-    ui.delete = button(editor, "Delete goal", 133, -507, 110, function()
-        if ns.db.goals[selected] then table.remove(ns.db.goals, selected) end
-        selected = math.max(1, math.min(selected, #ns.db.goals))
-        ns.Changed(); showEditor()
+    ui.planning=button(editor,"Customize expenses",204,-248,180,planCurrentGoal)
+    ui.plan=CreateFrame("Frame",nil,ui); ui.plan:SetPoint("TOPLEFT",16,-139); ui.plan:SetSize(368,290); ui.plan:Hide()
+    label(ui.plan,"Level",0,-4,32,"GameFontNormalSmall")
+    label(ui.plan,"Goal target / addition",36,-4,155,"GameFontNormalSmall")
+    label(ui.plan,"Training due",204,-4,145,"GameFontNormalSmall")
+    ui.scroll=CreateFrame("ScrollFrame","GoldEnvelopePlanScroll",ui.plan,"UIPanelScrollFrameTemplate")
+    ui.scroll:SetPoint("TOPLEFT",0,-29); ui.scroll:SetSize(354,250)
+    ui.planContent=CreateFrame("Frame",nil,ui.scroll); ui.planContent:SetSize(354,1); ui.scroll:SetScrollChild(ui.planContent)
+    ui.error=label(ui,"",16,-435,368,"GameFontHighlightSmall"); ui.error:SetTextColor(1,0.65,0.35)
+    button(ui,"Save goal",16,-466,90,saveCurrentGoal)
+    ui.delete=button(ui,"Delete goal",114,-466,90,function()
+        if ns.db.goals[selected] then table.remove(ns.db.goals,selected) end
+        selected=math.max(1,math.min(selected,#ns.db.goals)); ns.Changed(); showEditor()
     end)
-    ui.warnings = CreateFrame("CheckButton", nil, ui, "UICheckButtonTemplate")
-    ui.warnings:SetPoint("TOPLEFT", 20, -635)
-    label(ui, "Confirm before spending reserved savings", 54, -643, 550, "GameFontHighlightSmall")
-    ui.warnings:SetScript("OnClick", function(self)
-        ns.db.warnings = self:GetChecked() and true or false
-        ns.CancelPurchase(); ns.Changed()
-    end)
-    ui:SetScript("OnHide", function()
+    ui.warnings=CreateFrame("CheckButton",nil,ui,"UICheckButtonTemplate"); ui.warnings:SetPoint("TOPLEFT",286,-462)
+    label(ui,"Warn",320,-471,64,"GameFontHighlightSmall")
+    ui.warnings:SetScript("OnClick",function(self) ns.db.warnings=self:GetChecked() and true or false; ns.CancelPurchase(); ns.Changed() end)
+    ui:SetScript("OnHide",function()
+        if ui.goalPicker then ui.goalPicker:Hide() end
         if ui.presetPicker then ui.presetPicker:Hide() end
         if ns.ClosePlanningWindows then ns.ClosePlanningWindows() end
     end)
@@ -426,18 +371,43 @@ end
 
 function ns.ShowWarning(pending)
     if not ns.warningFrame then
-        local frame = window("GoldEnvelopeSavingsWarning", 430, 286, "This uses your savings")
-        ns.warningFrame = frame
+        local frame=window("GoldEnvelopeSavingsWarning",400,300,"Spend protected money?"); ns.warningFrame=frame
         frame:SetFrameLevel(3000)
-        frame.body = label(frame, "", 26, -57, 378, "GameFontHighlight")
-        frame.body:SetSpacing(5)
-        frame:SetScript("OnHide", function() ns.pending = nil end)
-        button(frame, "Spend anyway", 36, -242, 155, ns.ConfirmPurchase)
-        button(frame, "Cancel", 233, -242, 155, ns.CancelPurchase)
+        -- The tooltip backdrop texture is translucent even with an opaque tint.
+        -- Give this confirmation its own solid surface so world labels do not show through.
+        local surface=frame:CreateTexture(nil,"BACKGROUND",nil,-8)
+        surface:SetPoint("TOPLEFT",5,-5); surface:SetPoint("BOTTOMRIGHT",-5,5)
+        surface:SetColorTexture(0.055,0.04,0.025,1)
+        frame.itemName=label(frame,"",20,-57,360,"GameFontHighlight")
+        frame.itemName:SetWordWrap(false); frame.itemName:SetHeight(20)
+        label(frame,"This purchase uses money you set aside.",20,-82,360,"GameFontDisableSmall")
+        frame.moneyRows={}
+        for index,row in ipairs({
+            { key="cost", text="Purchase cost" },
+            { key="remaining", text="Wallet after purchase" },
+            { key="reserved", text="Protected money now" },
+            { key="used", text="Protected money used" },
+        }) do
+            local y=-109-(index-1)*25
+            local caption=label(frame,row.text,20,y,184,"GameFontHighlightSmall")
+            local amount=label(frame,"",216,y,164,"GameFontHighlightSmall")
+            caption:SetWordWrap(false); amount:SetWordWrap(false)
+            amount:SetJustifyH("RIGHT")
+            if row.key=="used" then caption:SetTextColor(1,0.65,0.35); amount:SetTextColor(1,0.65,0.35) end
+            frame.moneyRows[row.key]={caption=caption,amount=amount}
+        end
+        local divider=frame:CreateTexture(nil,"BORDER")
+        divider:SetPoint("TOPLEFT",20,-210); divider:SetSize(360,1)
+        divider:SetColorTexture(0.65,0.48,0.22,0.4)
+        local note=label(frame,"Spend anyway silences warnings for 2 minutes.",20,-222,360,"GameFontDisableSmall")
+        note:SetHeight(26)
+        frame:SetScript("OnHide",function() ns.pending=nil end)
+        button(frame,"Spend anyway",20,-260,170,ns.ConfirmPurchase); button(frame,"Cancel",210,-260,170,ns.CancelPurchase)
     end
-    local budget = pending.budget
-    ns.warningFrame.body:SetText(string.format("%s\n\nCost: %s\nBalance after spending: %s\nReserved at level %d: %s\nShortfall after spending: %s",
-        pending.action.label or "Purchase", ns.MoneyText(budget.cost), ns.MoneyText(budget.remaining),
-        UnitLevel("player"), ns.MoneyText(budget.reserved), ns.MoneyText(budget.afterShortfall)))
+    local b=pending.budget
+    ns.warningFrame.itemName:SetText(pending.action.label)
+    for key,amount in pairs({cost=b.cost,remaining=b.remaining,reserved=b.reserved,used=b.afterShortfall}) do
+        ns.warningFrame.moneyRows[key].amount:SetText(ns.MoneyText(amount))
+    end
     ns.warningFrame:Show()
 end

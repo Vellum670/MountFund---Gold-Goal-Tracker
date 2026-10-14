@@ -54,7 +54,7 @@ end
 function Model.ExpenseTotal(goal)
     local total = 0
     for _, expense in ipairs(goal.expenses or {}) do
-        if expense.selected and not expense.paid and expense.level <= goal.targetLevel then
+        if expense.selected and not expense.paid and expense.source ~= "class" and expense.level <= goal.targetLevel then
             total = total + (expense.copper or 0)
         end
     end
@@ -69,10 +69,13 @@ function Model.ValidateGoal(goal)
     if not integer(goal.targetLevel, 2, Model.MAX_LEVEL) then
         return nil, "Target level must be from 2 to " .. Model.MAX_LEVEL .. "."
     end
-    if not integer(goal.targetCopper, goal.planMode == "items" and 0 or 1, Model.MAX_COPPER) then
+    if not integer(goal.targetCopper, (goal.planMode == "items" or goal.includeClassTraining) and 0 or 1, Model.MAX_COPPER) then
         return nil, "Set a positive savings amount."
     end
-    if not integer(goal.curve, 1, 4) then return nil, "Savings curve must be from 1 to 4." end
+    if not integer(goal.curve, 0, 4) then return nil, "Choose an income-based or custom savings curve." end
+    if goal.startLevel and not integer(goal.startLevel, 1, Model.MAX_LEVEL) then return nil, "Invalid start level." end
+    if goal.initialCopper and not integer(goal.initialCopper, 0, Model.MAX_COPPER) then return nil, "Invalid initial investment." end
+    if goal.savedCopper and not integer(goal.savedCopper, 0, Model.MAX_COPPER) then return nil, "Invalid saved balance." end
     if goal.planMode == "items" then
         if type(goal.expenses) ~= "table" then return nil, "Invalid expense plan." end
         local keys = {}
@@ -90,7 +93,7 @@ function Model.ValidateGoal(goal)
     end
     if type(goal.milestones) ~= "table" then return nil, "Invalid milestones." end
     for level, amount in pairs(goal.milestones) do
-        if not integer(level, 2, goal.targetLevel - 1)
+        if not integer(level, (goal.startLevel or 1) + 1, goal.targetLevel - 1)
             or not integer(amount, 0, goal.targetCopper) then
             return nil, "Milestones must fall before the target level and within the final amount."
         end
@@ -104,7 +107,7 @@ function Model.ValidateGoal(goal)
 end
 
 function Model.Points(goal)
-    local points = { { level = 1, copper = 0 } }
+    local points = { { level = goal.startLevel or 1, copper = goal.initialCopper or 0 } }
     for level, copper in pairs(goal.milestones) do
         points[#points + 1] = { level = level, copper = copper }
     end
@@ -113,50 +116,112 @@ function Model.Points(goal)
     return points
 end
 
+function Model.Fraction(startLevel, endLevel, level, curve)
+    if endLevel <= startLevel then return level >= startLevel and 1 or 0 end
+    if level <= startLevel then return 0 end
+    if level >= endLevel then return 1 end
+    if curve ~= 0 then return ((level - startLevel) / (endLevel - startLevel)) ^ curve end
+    local earned, total = 0, 0
+    for step = startLevel + 1, endLevel do
+        local weight = ns.IncomeWeights and ns.IncomeWeights[step] or step ^ 3
+        total = total + weight
+        if step <= level then earned = earned + weight end
+    end
+    return total > 0 and earned / total or 0
+end
+
 function Model.TargetAtLevel(goal, level)
+    local start = goal.startLevel or 1
+    if level < start then return 0 end
+    local initial = math.min(goal.initialCopper or 0, goal.targetCopper)
     if goal.planMode == "items" then
-        local reserved = 0
+        local total, weighted = Model.ExpenseTotal(goal), 0
         for _, expense in ipairs(goal.expenses) do
-            if expense.selected and not expense.paid and expense.level <= goal.targetLevel and expense.copper then
-                local progress = expense.level == 1 and 1
-                    or math.min(1, math.max(0, (level - 1) / (expense.level - 1)))
-                reserved = reserved + math.floor(expense.copper * progress ^ goal.curve)
+            if expense.selected and not expense.paid and expense.source ~= "class"
+                and expense.level <= goal.targetLevel and expense.copper then
+                weighted = weighted + expense.copper * Model.Fraction(start, expense.level, level, goal.curve)
             end
         end
-        return reserved
+        if total == 0 then return 0 end
+        return math.floor(initial + (total - initial) * weighted / total)
     end
-    if level <= 1 then return 0 end
+    if level == start and goal.targetLevel > start then return initial end
     if level >= goal.targetLevel then return goal.targetCopper end
     local points = Model.Points(goal)
     for i = 2, #points do
         local left, right = points[i - 1], points[i]
         if level <= right.level then
-            local progress = (level - left.level) / (right.level - left.level)
-            return math.floor(left.copper + (right.copper - left.copper) * progress ^ goal.curve)
+            return math.floor(left.copper + (right.copper - left.copper)
+                * Model.Fraction(left.level, right.level, level, goal.curve))
         end
     end
+    return initial
 end
 
-function Model.Reserved(goals, level)
-    local reserved = 0
+function Model.GoalProgress(goal, level)
+    local saved = math.min(goal.savedCopper or 0, goal.targetCopper)
+    local expected = Model.TargetAtLevel(goal, level)
+    return { saved = saved, expected = expected, target = goal.targetCopper,
+        ahead = math.max(0, saved - expected), behind = math.max(0, expected - saved),
+        percent = goal.targetCopper > 0 and math.min(100, saved / goal.targetCopper * 100) or 100 }
+end
+
+function Model.Reconcile(goals, balance)
+    local left = math.max(0, balance)
     for _, goal in ipairs(goals) do
-        if goal.active then reserved = reserved + Model.TargetAtLevel(goal, level) end
+        if goal.active then
+            goal.savedCopper = math.min(goal.savedCopper or 0, goal.targetCopper, left)
+            left = left - goal.savedCopper
+        else goal.savedCopper = 0 end
     end
-    return reserved
 end
 
-function Model.Budget(goals, level, balance)
-    local reserved = Model.Reserved(goals, level)
-    return { balance = balance, reserved = reserved, spendable = math.max(0, balance - reserved),
-        shortfall = math.max(0, reserved - balance) }
+function Model.Budget(goals, level, balance, trainingDue)
+    local saved, expected = 0, 0
+    for _, goal in ipairs(goals) do
+        if goal.active then
+            saved = saved + math.min(goal.savedCopper or 0, goal.targetCopper)
+            expected = expected + Model.TargetAtLevel(goal, level)
+        end
+    end
+    saved = math.min(balance, saved)
+    trainingDue = math.max(0, trainingDue or 0)
+    local trainingFunded = math.min(math.max(0, balance - saved), trainingDue)
+    return { balance = balance, saved = saved, expected = expected,
+        ahead = math.max(0, saved - expected), behind = math.max(0, expected - saved),
+        trainingDue = trainingDue, trainingFunded = trainingFunded,
+        trainingShortfall = trainingDue - trainingFunded, reserved = saved + trainingFunded }
 end
 
-function Model.Purchase(goals, level, balance, cost)
-    local budget = Model.Budget(goals, level, balance)
-    budget.cost = cost
-    budget.remaining = balance - cost
-    budget.affordable = cost <= balance
-    budget.warning = cost > 0 and budget.remaining < budget.reserved
-    budget.afterShortfall = math.max(0, budget.reserved - budget.remaining)
+function Model.FundGoals(goals, amount, balance, trainingDue)
+    Model.Reconcile(goals, balance)
+    local budget = Model.Budget(goals, 1, balance, trainingDue)
+    local left = math.min(amount, math.max(0, balance - budget.saved - (trainingDue or 0)))
+    local ordered = {}
+    for _, goal in ipairs(goals) do if goal.active then ordered[#ordered + 1] = goal end end
+    table.sort(ordered, function(a, b) return a.targetLevel < b.targetLevel end)
+    for _, goal in ipairs(ordered) do
+        local addition = math.min(left, math.max(0, goal.targetCopper - (goal.savedCopper or 0)))
+        goal.savedCopper = (goal.savedCopper or 0) + addition
+        left = left - addition
+    end
+end
+
+function Model.InitialInvestment(balance, trainingDue, allocated, percent, override, target)
+    if balance < trainingDue then return 0 end
+    local free = math.max(0, balance - trainingDue - allocated)
+    local wanted = override or math.floor(balance * (percent or 20) / 100)
+    return math.floor(math.max(0, math.min(wanted, free, target)))
+end
+
+function Model.Purchase(goals, level, balance, cost, trainingDue, plannedTraining)
+    local budget = Model.Budget(goals, level, balance, trainingDue)
+    budget.cost, budget.remaining, budget.affordable = cost, balance - cost, cost <= balance
+    local protected = budget.reserved
+    if plannedTraining then protected = protected - math.min(cost, budget.trainingFunded) end
+    budget.warning = cost > 0 and budget.remaining < protected
+    budget.afterSaved = math.min(budget.saved, math.max(0, budget.remaining))
+    budget.savingsUsed = budget.saved - budget.afterSaved
+    budget.afterShortfall = math.max(0, protected - budget.remaining)
     return budget
 end

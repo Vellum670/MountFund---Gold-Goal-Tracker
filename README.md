@@ -1,13 +1,16 @@
 # Gold Envelope for WoW: Forever
 
-Save toward level-based goals and confirm before a supported purchase would use
-reserved savings. Open the addon with `/envelope` or `/ge`; `/ge status` prints
-your current balance, reserve, and spending allowance.
+Save toward level-based goals, track actual savings against your plan, and
+confirm before supported purchases use protected money. Open with `/envelope`
+or `/ge`; `/ge status` prints your wallet and goal progress.
 
 ## Install
 
-[Download GoldEnvelope.zip](downloads/GoldEnvelope.zip?raw=true) — contains only
-the `GoldEnvelope` addon folder.
+[Download Gold Envelope Here](https://github.com/Vellum670/WoW-Forever-Addon/raw/refs/heads/main/downloads/GoldEnvelope.zip) — Direct Download Link
+
+
+If the download does not start, [open the ZIP on GitHub](https://github.com/Vellum670/WoW-Forever-Addon/blob/main/downloads/GoldEnvelope.zip)
+and click **Download raw file**.
 
 Extract it into the Forever client's `Interface/AddOns/` folder.
 The path should end in `AddOns/GoldEnvelope/GoldEnvelope.toc`. Restart
@@ -16,115 +19,127 @@ The interface version is `16001` (Forever 1.60.1).
 
 ## Savings goals
 
-Enter a goal name, target level, and final amount in gold, silver, and copper.
-Goals and settings are saved separately for each character. The preset picker
-includes First Mount & Riding (100g by level 40), Epic Mount & Riding (1,000g by
-level 60), Class Training, and Profession Training. Mount amounts are editable
-starter budgets, not guaranteed quotes or automatic reputation-discount
-calculations. No preset reserves money until you save it. Selecting an existing
-preset opens its saved goal rather than creating a duplicate.
+New goals start at your character's **current level**. A level-25 character sees
+levels 25 onward. Choose a goal from **Goals**, then edit its name, target level,
+and amount. The main window is 400 × 500 UI units; the goal list and expense
+chooser open separately. Coin amounts use native gold, silver, and copper icons.
 
-Reserve money for multiple goals by adding them; their current targets add
-together. Choose a goal from the left-hand list to edit it. The UI uses the game's
-gold/silver/copper artwork, dark panels, metallic borders, and gold headings.
+Presets include First Mount & Riding (100g by level 40), Epic Mount & Riding
+(1,000g by level 60), Class Training, and Profession Training. Mount amounts are
+editable starter budgets; trainer prices and discounts can differ. A preset
+only becomes active when saved. Selecting an existing preset opens that goal.
 
-Targets mean **money to have saved by a level**, rather than money to earn at
-that level. Money remains in your wallet; the addon maintains a planned reserve.
-The spending allowance is `max(0, current balance - total reserve today)`.
+The default initial investment is **20% of your current wallet**, capped by the
+goal amount and money left after existing allocations and the next two levels
+of class training. Change the percentage or enter a coin override before saving.
+If you cannot afford that training, or a relevant price is unknown, the initial
+investment is zero. Training protection applies to the initial investment even
+when you have not enabled ongoing Class Training expenses.
 
-Each simple budget starts at 0 copper at level 1. The default curve (2) grows slowly early
-and more quickly later. Curves 3 and 4 put even more saving at later levels; 1
-uses equal additions between levels. For example, an illustrative 10g goal at
-level 21 with curve 2 reserves 2g 50s at level 11 and the full 10g at level 21.
-These are user-defined budgeting targets, **not estimates of Forever earnings**.
+The default **Income-based** curve puts less saving at low levels and more at
+higher levels. It uses relative quest reward/XP estimates, rather than claiming
+you should own a fixed amount of gold at each level. Curves 1–4 are optional
+custom curves; 1 is linear, and higher values defer more saving. Existing custom
+checkpoints are retained when valid. The Plan table shows cumulative goal
+targets, additions, and class-training costs at their actual required levels.
+See [research, data sources, and limitations](docs/economy-research.md).
 
-Optional checkpoints let you set exact cumulative amounts at intermediate
-levels. The same curve interpolates between adjacent checkpoints. Checkpoints
-must stay within the final goal and never decrease. The scrollable table lists
-every level's cumulative reserve and the addition since the prior level in
-aligned columns, marks checkpoints, and highlights your current level.
-Click **Save goal** to persist editor changes.
+## Actual savings and progress
 
-The full goal stays reserved after its target level. Uncheck **Reserve money
-for this goal** and save when ready to spend it on its intended purpose. Gold
-earned above the reserve is available to spend. If you are already behind the
-plan, any further positive-cost supported purchase requires confirmation.
+**Saved** is real money allocated from your wallet. The level target is shown
+separately, with how far ahead or behind you are. `/ge status` reports your exact
+wallet, each goal's saved amount and progress, and any shared training budget.
+There is no Available figure. Total protected money never exceeds your wallet.
 
-## Optional itemized planning
+After the initial investment, actual incoming money funds active goals in
+order of earliest deadline, after leaving room for enabled class training.
+This includes any positive wallet change, such as loot, a sale, or received
+mail; it does not claim to distinguish their sources. Spending uses unallocated
+cash first, then reduces savings if necessary. Goals do not move coins out of
+your wallet. Uncheck **Track this goal** and save to release its allocation.
 
-When a character below level 60 first saves a new goal, the addon asks whether
-they want to choose individual expenses or keep a simple budget. The same prompt
-applies to all custom and preset goals. It does not display spell or expense
-checkboxes until the player opts in. Existing goals can use **Customize planning**
-to request the same choice; level-60 characters can opt in manually.
+Old goals migrate to your current level with a safe initial allocation; old
+planned reserves are not treated as money you actually saved. Income received
+while logged out is not retrospectively assigned to goals.
 
-For Class Training, visit your character's class trainer with all service filters
-shown, including unavailable and known abilities. The addon records the trainer's
-spell names, ranks, required levels, and quoted coin prices. This works for each
-class through its own trainer; it does not ship a presumed complete spell-price
-database. Uncheck ranks you do not intend to train. Profession Training works
-the same way for profession ranks and recipes.
+## Expenses and Class Training
 
-Trainer prices are captured when the trainer opens or updates, and refresh
-itemized saved goals and open checklists. Missing entries remain unobserved;
-missing prices are shown as unknown and excluded from the known-cost total.
-Filters and different trainers can limit the available list. Previously captured
-entries are retained when absent from a later filtered list. Exclusions persist
-across price updates, and observed learned ranks stop reserving money. Prices
-may change with discounts or game updates, so revisiting a trainer refreshes
-the quote. An observed riding quote replaces an itemized mount's starter estimate.
+Below level 60, saving a new goal first asks whether you want to choose expenses.
+The same prompt applies to custom goals and presets. **Customize expenses**
+opens this choice again; level-60 characters can opt in manually.
 
-Any goal can have a checklist of manually entered purchases with individual
-amounts and due levels. Each checked, unpaid cost saves along the selected curve
-until its own due level; costs beyond the goal's target level are excluded. Its
-known selected costs determine the final amount, so amount inputs in the main
-editor are read-only for itemized plans. Custom checkpoints belong to simple
-budgets; itemized plans use their individual expense levels instead. Mark a
-manual expense as excluded once paid. **Apply choices** updates the editor;
-**Save goal** persists it. Cancel or Escape discards checklist edits.
+Check **Class training** to use the bundled level 1–60 catalog for your class:
+1,374 spell/rank entries across the nine classes. It works before visiting a
+trainer. The chooser displays costs relevant to your goal's start and target
+levels; uncheck abilities or ranks you do not plan to learn. Known spells and
+ineligible race/talent ranks do not require funds.
+
+Class training remains a **shared expense budget**, separate from your mount
+or other goal's final amount. It protects current training plus the next two
+levels, while the Plan table shows future costs at their required levels. Two
+goals including the same training do not count its cost twice. If either active
+goal selects a rank, the shared budget includes it. Intended trainer purchases
+may use this training money; spending goal savings still requires confirmation.
+
+Bundled prices are **base estimates**, not guaranteed current server quotes.
+Visiting a trainer replaces matching estimates with your observed prices and
+adds new observed ranks. Show all trainer filters to capture future and known
+services. Unchecked ranks stay excluded when prices refresh. Unknown prices are
+flagged; the known-cost total cannot guarantee enough money for unknown costs.
+See the research document for catalog provenance and eligibility limitations.
+
+Profession Training uses observed profession ranks and recipes. A riding quote
+replaces an itemized mount's starter estimate. You can also add manual expenses
+with individual amounts and due levels. Checked, unpaid non-class expenses
+set an itemized goal's amount and follow its savings curve. Mark manual costs
+excluded once paid. **Apply choices** updates the editor; **Save goal** persists
+it. Cancel or Escape discards checklist changes.
 
 ## Before-purchase warnings
 
-When a supported action would leave you below your current reserve, a warning
-shows its cost, remaining balance, reserve at your level, and resulting shortfall.
-**Cancel** or Escape spends nothing. **Spend anyway** authorizes only that action.
-Reaching the reserve exactly does not trigger a warning. Free actions do not
-trigger warnings.
+When a supported purchase would use actual goal savings or protected training
+money, a warning appears **before** spending. It shows the price, remaining
+wallet, and protected money used. **Cancel** or Escape spends nothing;
+**Spend anyway** authorizes that action and silences further savings warnings
+for **two minutes**. The timer starts after a valid confirmation; Cancel or Escape
+does not start it. Purchases during the cooldown still require a valid price and
+enough money. The cooldown resets when the UI reloads or you log out.
+Spending unallocated cash, reaching the protected limit exactly, or a free
+action does not trigger a warning merely
+because you are behind a future savings target.
 
-The addon checks the selection, price, funds, and reserve again on confirmation.
+The addon checks the selection, price, funds, and savings again on confirmation.
 Changed selections or prices cancel the pending action; changes to funds or
 goals refresh the warning. Closing the merchant, trainer, or auction house
 cancels pending actions. Expired commodity quotes cannot be accepted.
 
-Initial native UI coverage:
+Native UI coverage:
 
-- Vendor right-click purchases and quantity purchases through the stack selector.
-- Vendor buyback and the repair-all button using your own money.
+- Vendor right-click and stack-selector quantity purchases.
+- Vendor buyback and repair-all using your own money.
 - The trainer's Train button, including profession confirmations.
-- Modern auction item buyout/bid confirmations and commodity Buy Now confirmations.
+- Modern auction item buyout/bid and commodity Buy Now confirmations.
 
-This is an advisory guard for these UI actions, not a lock on your wallet.
-Cursor/drag vendor buying, single-item repair, mail, trades, flight payments,
-auction deposits/cancellation fees, gossip purchases, controller actions that
-call Blizzard functions directly, macros, and other addons' automatic purchases
-are not intercepted. Those actions still update the displayed balance. Blizzard's
-purchase APIs are not replaced. Disable competing auto-buy/auto-repair features
-when trying the warning flow.
+This is an advisory guard for these UI actions. Cursor/drag vendor buying,
+single-item repair, mail, trades, flights, auction fees, gossip purchases,
+macros, and other addons' direct purchases are not intercepted. Their money
+changes still reconcile savings. Blizzard purchase APIs are not replaced.
 
-## Validation
+## Validation and packaging
 
-The Lua model and purchase confirmation flow have automated tests with mocked
-WoW APIs. Run `lua tests/run.lua` from this repository, using Lua 5.1 or later
-(`unpack` compatibility is provided by the test harness).
+Run `lua tests/run.lua` from the repository with Lua 5.1 or later. Tests cover
+real-money accounting, training prices and exclusions, forward-only plans,
+migration, initial-investment protection, frame dimensions, and purchase guards.
+Run `python3 scripts/package_addon.py` to rebuild and verify
+[the addon-only ZIP](downloads/GoldEnvelope.zip), including its bundled data.
 
-Live-client validation is still required: `/console scriptErrors 1`, create a
-small test goal, and try vendor purchases below/at/above the reserve, quantity
-buying, cancel/confirm, buyback, repair-all, training, and auctions. Check both
-mouse and controller behavior, interactions with your other addons, and that
-closing a window or letting a quote expire cancels a pending purchase.
-Also check the new frame layout and coin textures, the optional-planning prompt,
-trainer price capture (including future ranks), retained exclusions, learned
-spell detection, and your profession trainers' recipe lists.
+Live-client validation remains necessary. Enable `/console scriptErrors 1`,
+create a test goal, and check the compact layout, coin textures, trainer quotes,
+known-spell detection, expense exclusions, level-up costs, and `/ge status`.
+Exercise cancel/confirm, quantity purchases, buyback, repairs, training, and
+auctions. Confirm that repeat warnings stay quiet for two minutes after
+**Spend anyway**, then return when the cooldown expires. Check controller
+behavior and interactions with other addons too.
 
 API references: [Forever merchant UI](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_UIPanels_Game/Mainline/MerchantFrame.lua),
 [trainer UI](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_TrainerUI/Mainline/Blizzard_TrainerUI.lua),

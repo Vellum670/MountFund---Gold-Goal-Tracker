@@ -98,7 +98,12 @@ local function trainerAction()
     -- Pet training points are not coins.
     if C_Trainer and Enum and Enum.TrainerType and C_Trainer.GetTrainerType
         and C_Trainer.GetTrainerType() == Enum.TrainerType.Pet then return end
-    return { key = "training:" .. index .. ":" .. (name or ""), cost = cost, label = name or "Training" }
+    local classTraining = not (IsTradeskillTrainer and IsTradeskillTrainer())
+    if C_Spell and C_Spell.GetSpellName and (name == C_Spell.GetSpellName(33388) or name == C_Spell.GetSpellName(33391)) then
+        classTraining = false
+    end
+    return { key = "training:" .. index .. ":" .. (name or ""), cost = cost, label = name or "Training",
+        classTraining = classTraining }
 end
 
 local function commodityAction(control)
