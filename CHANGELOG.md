@@ -6,6 +6,10 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 No changes queued yet.
 
+## 1.1.0 - 2026-10-15
+
+- Update the addon version to 1.1.0.
+
 ## 0.4.23 - 2026-10-15
 
 - Add Report bug beside Close on the main page. Open a selectable GitHub issue
