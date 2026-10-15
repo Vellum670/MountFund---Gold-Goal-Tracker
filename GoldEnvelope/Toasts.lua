@@ -10,7 +10,7 @@ function ns.HideLevelUpToast()
     if ns.toastMoving and ns.FinishToastMove then ns.FinishToastMove(); return end
     ns.pendingLevelUpToast = nil
     if ns.levelUpToast then
-        ns.levelUpToast.startedAt = nil
+        ns.levelUpToast.startedAt, ns.levelUpToast.expiresAt = nil, nil
         ns.levelUpToast:SetAlpha(0)
         ns.levelUpToast:Hide()
     end
@@ -35,13 +35,16 @@ local function showPending()
     ns.pendingLevelUpToast = nil
     local summary = pending.preview and previewSummary(pending.level) or ns.BuildLevelUpSummary(pending.level)
     if not summary then ns.HideLevelUpToast(); return end
+    summary.reason=pending.reason
     local frame = ns.levelUpToast
     frame.summary, frame.startedAt = summary, GetTime()
+    frame.expiresAt=frame.startedAt+DISPLAY_SECONDS
     frame:SetSize(330, 68 + #summary.goals * 62 + (summary.remainingCount > 0 and 16 or 0))
-    frame.title:SetText((summary.preview and "Preview: " or "") .. "Level " .. summary.level .. "!")
+    frame.title:SetText((summary.preview and "Preview: " or "")
+        .. (summary.reason=="login" and "Welcome back!" or "Level " .. summary.level .. "!"))
     local first = summary.goals[1]
     frame.cheer:SetText(first.status == "complete" and "Fully funded. Adventure awaits!"
-        or first.status == "behind" and "New level, fresh adventure!"
+        or first.status == "behind" and (summary.reason=="login" and "A fresh adventure awaits!" or "New level, fresh adventure!")
         or "Keep the coins rolling!")
     for _, row in ipairs(frame.rows) do row:Hide() end
     for index, progress in ipairs(summary.goals) do
@@ -79,16 +82,21 @@ local function onUpdate(frame)
     if inCombat() then
         -- Resume with a fresh snapshot after combat, without stacking cards.
         if not ns.pendingLevelUpToast and frame.startedAt then
-            ns.pendingLevelUpToast = { level = frame.summary.level, preview = frame.summary.preview, readyAt = GetTime() + 0.5 }
+            ns.pendingLevelUpToast = { level = frame.summary.level, preview = frame.summary.preview,
+                reason=frame.summary.reason, readyAt = GetTime() + 0.5 }
         end
-        frame.startedAt = nil; frame:SetAlpha(0); frame:Hide()
+        frame.startedAt,frame.expiresAt = nil,nil; frame:SetAlpha(0); frame:Hide()
         return
     end
     if ns.pendingLevelUpToast and GetTime() >= ns.pendingLevelUpToast.readyAt then showPending() end
     if not frame.startedAt then return end
-    local age = GetTime() - frame.startedAt
-    if age >= DISPLAY_SECONDS then ns.HideLevelUpToast(); return end
-    local alpha = math.min(1, age / FADE_IN, (DISPLAY_SECONDS - age) / FADE_OUT)
+    local now=GetTime(); local age=now-frame.startedAt
+    -- Poll cursor bounds so hovering does not require capturing mouse clicks.
+    local hovered=MouseIsOver and MouseIsOver(frame)
+    if hovered then frame.expiresAt=now+DISPLAY_SECONDS end
+    local remaining=(frame.expiresAt or frame.startedAt+DISPLAY_SECONDS)-now
+    if remaining<=0 then ns.HideLevelUpToast(); return end
+    local alpha=hovered and 1 or math.min(1,age/FADE_IN,remaining/FADE_OUT)
     frame:SetAlpha(math.max(0, alpha))
     frame.glow:SetAlpha(0.16 + 0.1 * math.sin(age * 5))
     for _, row in ipairs(frame.rows) do
@@ -145,7 +153,10 @@ local function createToast()
     frame:SetMovable(true); frame:SetClampedToScreen(true); frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart",function(self) if ns.toastMoving then self:StartMoving() end end)
     frame:SetScript("OnDragStop",function(self) self:StopMovingOrSizing() end)
-    frame:SetScript("OnHide",function() if ns.toastMoving then ns.FinishToastMove() end end)
+    frame:SetScript("OnHide",function(self)
+        self.startedAt,self.expiresAt=nil,nil
+        if ns.toastMoving then ns.FinishToastMove() end
+    end)
     tinsert(UISpecialFrames,"GoldEnvelopeLevelUpToast")
     frame:SetAlpha(0); frame:Hide()
     return frame
@@ -157,17 +168,22 @@ function ns.FlushLevelUpToast()
     if not pending.preview and not ns.db.levelUpToasts then ns.HideLevelUpToast(); return end
     if inCombat() then return end
     local frame = createToast()
-    frame.startedAt = nil; frame:SetAlpha(0); frame:Show()
+    frame.startedAt,frame.expiresAt = nil,nil; frame:SetAlpha(0); frame:Show()
     if GetTime() >= pending.readyAt then showPending() end
 end
 
-function ns.QueueLevelUpToast(level)
+function ns.QueueLevelUpToast(level,reason)
     if not ns.db.levelUpToasts or not ns.BuildLevelUpSummary(level) then return end
-    ns.pendingLevelUpToast = { level = level, preview = ns.testPlayerLevel ~= nil or ns.testMoneyCopper ~= nil, readyAt = GetTime() + 0.5 }
+    ns.pendingLevelUpToast = { level = level, reason=reason,
+        preview = ns.testPlayerLevel ~= nil or ns.testMoneyCopper ~= nil, readyAt = GetTime() + 0.5 }
     if inCombat() and ns.levelUpToast then
-        ns.levelUpToast.startedAt = nil; ns.levelUpToast:SetAlpha(0); ns.levelUpToast:Hide()
+        ns.levelUpToast.startedAt,ns.levelUpToast.expiresAt = nil,nil; ns.levelUpToast:SetAlpha(0); ns.levelUpToast:Hide()
     end
     ns.FlushLevelUpToast()
+end
+
+function ns.QueueLoginToast()
+    ns.QueueLevelUpToast(ns.GetPlayerLevel(),"login")
 end
 
 -- Explicit command preview; the slash handler checks the trailing password.
@@ -198,7 +214,7 @@ function ns.FinishToastMove()
     if x and top then ns.db.toastPosition={x=math.max(0,math.min(1,x/w)),y=math.max(0,math.min(1,top/h))} end
     ns.toastMoving=false; ns.pendingLevelUpToast=nil
     frame:EnableMouse(false); frame:EnableKeyboard(false); frame:SetFrameStrata("LOW")
-    frame.startedAt=nil; frame:SetAlpha(0); frame:Hide(); ns.ApplyToastPosition()
+    frame.startedAt,frame.expiresAt=nil,nil; frame:SetAlpha(0); frame:Hide(); ns.ApplyToastPosition()
     if ns.ui and ns.ui.moveToast then ns.ui.moveToast:SetText("Move toast") end
 end
 function ns.ToggleToastMove()

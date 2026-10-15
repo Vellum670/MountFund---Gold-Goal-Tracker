@@ -11,9 +11,9 @@ end
 function ns.AskGoalPlanning(goal,onYes,onNo)
     ns.EnsureUI()
     if not ns.planningConsent then
-        local page=UI.CreatePage("planning","Planning choices",240); ns.planningConsent=page
+        local page=UI.CreatePage("planning","Additional Expenses",240); ns.planningConsent=page
         page.body=UI.Label(page,"",0,0,368,"GameFontHighlightSmall"); page.body:SetSpacing(5)
-        UI.Button(page,"Choose expenses",0,-128,178,function()
+        UI.Button(page,"Additional Expenses",0,-128,178,function()
             local callback=page.yes
             if callback then callback() end
         end)
@@ -82,6 +82,29 @@ local function showTooltip(button)
     if item.priceSource then GameTooltip:AddLine(item.priceSource,0.6,0.6,0.6) end
     GameTooltip:Show()
 end
+local function canDeleteExpense(item)
+    return item.source=="manual" and item.key~="manual:initial" and not item.estimated
+end
+local function deleteExpense(page,button)
+    if page.classMode or not page.goal then return end
+    local deleted={}
+    for _,item in ipairs(button.expenses) do
+        if canDeleteExpense(item) then deleted[item.key]=true end
+    end
+    if not next(deleted) then return end
+    for index=#page.goal.expenses,1,-1 do
+        if deleted[page.goal.expenses[index].key] then table.remove(page.goal.expenses,index) end
+    end
+    if deleted[page.manualKey] then
+        page.manualKey=nil; page.expenseName:SetText("")
+        page.expenseLevel:SetText(tostring(page.goal.targetLevel)); UI.SetCoins(page.expenseAmount,0)
+    end
+    local pending=ns.testMoneyCopper~=nil and ns.testExpenseDraft or ns.db.expenseDraft
+    if pending and pending.index==ns.ui.selectedGoalIndex and pending.name==page.goal.name and deleted[pending.key] then
+        if ns.testMoneyCopper~=nil then ns.testExpenseDraft=nil else ns.db.expenseDraft=nil end
+    end
+    GameTooltip:Hide(); changed(page); ns.ui.error:SetText(""); ns.RefreshExpensePlanner()
+end
 function ns.RefreshExpensePlanner()
     local page=ns.planningFrame
     if not page or not page.goal or not ns.ui or ns.ui.currentPage~=page.key then return end
@@ -91,7 +114,7 @@ function ns.RefreshExpensePlanner()
     page.summary:SetText("Goal target " .. ns.MoneyText(page.goal.targetCopper) .. "\nNext two levels' training " .. ns.MoneyText(training)
         .. (not complete and " - some prices unknown" or ""))
     local className=UnitClass("player")
-    page.hint:SetText(page.classMode and ((className or "Class") .. " - level " .. ns.GetPlayerLevel() .. " - next upgrades") or "Click icons to include or exclude purchases.")
+    page.hint:SetText(page.classMode and ((className or "Class") .. " - level " .. ns.GetPlayerLevel() .. " - next upgrades") or "Click to include/exclude. x deletes manual expenses.")
     page.expenseButtons=page.expenseButtons or {}; for _,button in ipairs(page.expenseButtons) do button:Hide() end
     local groups=ns.AbilityGroups(page.goal,page.classMode)
     for index,group in ipairs(groups) do
@@ -114,6 +137,18 @@ function ns.RefreshExpensePlanner()
         end
         button.unknown,button.maxed,button.blocked,button.requiredLevel=group.unknown,group.maxed,group.blocked,group.requiredLevel
         for field,value in pairs(group) do button[field]=value end
+        local deletable=not page.classMode and canDeleteExpense(group.expense)
+        if deletable and not button.deleteExpense then
+            button.deleteExpense=CreateFrame("Button",nil,button,"UIPanelCloseButton")
+            button.deleteExpense:SetSize(18,18); button.deleteExpense:SetPoint("TOPRIGHT",2,2)
+            button.deleteExpense:SetScript("OnClick",function() deleteExpense(page,button) end)
+            button.deleteExpense:SetScript("OnEnter",function(self)
+                GameTooltip:SetOwner(self,"ANCHOR_RIGHT"); GameTooltip:SetText("Delete " .. button.expense.name)
+                GameTooltip:AddLine("Remove this manual expense from this goal.",1,1,1,true); GameTooltip:Show()
+            end)
+            button.deleteExpense:SetScript("OnLeave",function() GameTooltip:Hide() end)
+        end
+        if button.deleteExpense then button.deleteExpense:SetShown(deletable) end
         button:ClearAllPoints(); button:SetPoint("TOPLEFT",6+((index-1)%8)*44,-math.floor((index-1)/8)*54-2)
         button.icon:SetTexture(ns.ExpenseIcon(group.expense))
         local included=group.included
@@ -164,7 +199,7 @@ function ns.OpenExpensePlanner(goal,onChange,classOnly)
     ns.EnsureUI(); ns.planningFrames=ns.planningFrames or {}
     local key=classOnly and "training" or "expenses"; local page=ns.planningFrames[key]
     if not page then
-        page=UI.CreatePage(key,classOnly and "Class training" or "Goal expenses",classOnly and 450 or 405); ns.planningFrames[key]=page
+        page=UI.CreatePage(key,classOnly and "Class training" or "Additional Expenses",classOnly and 450 or 405); ns.planningFrames[key]=page
         page.key,page.classMode=key,classOnly and true or false
         page.goalName=UI.Label(page,"",0,0,368); page.goalName:SetWordWrap(false)
         page.summary=UI.Label(page,"",0,-24,368,"GameFontHighlightSmall")

@@ -6,6 +6,87 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 No changes queued yet.
 
+## 0.4.13 - 2026-10-14
+
+- Advance to the next gold-making tip in your level bracket each time the
+  Gold Envelope window reopens. Page changes and progress updates keep the
+  current tip, and the arrows still allow manual browsing.
+
+## 0.4.12 - 2026-10-14
+
+- Add gold-making tips at the bottom of the main page, matched to your current
+  level bracket, with a separate set of fifteen ideas at level 60.
+- Browse tips using compact arrows, keeping farming locations, requirements,
+  and selling context. Tips also follow test-level previews.
+
+## 0.4.11 - 2026-10-14
+
+- Save pending goal and expense fields before reload or logout, even when the
+  cursor is still in a field. Preserve unfinished input as a draft.
+- Save an active toast-position adjustment before logout. Test-wallet goals
+  remain temporary and never replace real saved goals.
+
+## 0.4.10 - 2026-10-14
+
+- Even out gold, silver, and copper input spacing, including the native field
+  borders, and center each coin icon beside its field.
+
+## 0.4.9 - 2026-10-14
+
+- Add a Delete button beside each goal in the Goals list, and keep the main
+  page's Delete goal button inside its visible bounds.
+- Remove a deleted goal's pending drafts so autosave cannot restore it, while
+  preserving unfinished fields for remaining goals.
+- Keep actual gold and trainer data intact. Goal deletion during gold testing
+  affects only the session's simulated goals.
+
+## 0.4.8 - 2026-10-14
+
+- Rename the expense button and page to **Additional Expenses**.
+- Add a small delete button to manually added expenses. Deletion saves
+  immediately and clears the expense's editor so it does not reappear on close.
+- Keep class, profession, riding, and the original goal budget protected from
+  deletion. Training retains its include/exclude controls.
+
+## 0.4.7 - 2026-10-14
+
+- Hovering a toast resets its six-second dismissal timer and holds it open;
+  moving the cursor away resumes the countdown. Hover restores a fading toast
+  to full visibility without restarting its progress-bar animation.
+- Keep normal toasts click-through and retain combat deferral while hovering.
+
+## 0.4.6 - 2026-10-14
+
+- Show the goal-progress toast once on character login with a "Welcome back!"
+  message. Zoning, instance loading, and UI reloads do not trigger it.
+- Use the existing notification setting for login and level-up toasts. Login
+  progress requires an active goal and waits until combat ends when necessary.
+
+## 0.4.5 - 2026-10-14
+
+- Add a gold arrow and hover hint to the goal-type button so players can see
+  that clicking cycles between level, calendar date, and play time.
+
+## 0.4.4 - 2026-10-14
+
+- Match the Class training button's width and left edge to the expense button
+  below it.
+
+## 0.4.3 - 2026-10-14
+
+- Move each level's cumulative savings goal to the right column of the plan.
+  The middle column shows the planned addition and a minus-expenses line.
+- Include selected, unpaid class training, profession, riding, and manual
+  expenses at their due levels. Hover the expense line for individual costs;
+  unknown prices are flagged. Viewing the plan does not deduct any money.
+
+## 0.4.2 - 2026-10-14
+
+- Added **Goal for this level** to the main page with the selected goal's
+  planned total and scheduled addition for the current level.
+- Use **Goal for now** for calendar and play-time goals, and show the upcoming
+  training budget for training-only goals. Keep the main window at 400 × 450.
+
 ## 0.4.1 - 2026-10-14
 
 - Make every training ability icon selectable, including abilities with unmet

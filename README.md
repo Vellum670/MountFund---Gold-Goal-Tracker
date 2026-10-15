@@ -36,10 +36,20 @@ time**:
 Fields save silently when you leave them; buttons and ability selections save
 immediately. **Escape** saves and closes the window, including a field you are
 still typing in. Incomplete input is kept for reopening without replacing valid
-goal settings. The main window is 400 × 450 UI units. Menus open as pages in this
+goal settings. The main window is 400 × 560 UI units. Menus open as pages in this
 same window, with **Back** on other pages; short pages shrink to fit their content.
 Savings plans and expense grids also resize when they contain only a few rows.
 Coin amounts use native gold, silver, and copper icons.
+
+Gold-making tips appear at the bottom of the main page for your current level
+bracket. Each reopening advances to the next tip, wrapping after the last one.
+Use the arrows to browse three leveling tips or fifteen level-60 ideas;
+each includes its farming location and selling context. Hover for the full text.
+Tips switch brackets as you level and also follow `/ge testlevel` previews.
+
+Delete a saved goal using **Goals → Delete** beside its entry, or **Delete goal**
+on the main page. This removes its plan and releases its savings allocation;
+your actual gold and trainer data are kept.
 
 Presets include First Mount & Riding (100g by level 40), Epic Mount & Riding
 (1,000g by level 60), Class Training, and Profession Training. Mount amounts are
@@ -57,9 +67,19 @@ you should own a fixed amount of gold at each level. Other choices are **Steady
 saving**, **Save more later**, **Light start**, and **Late push**, with descriptions
 on hover. Time goals start with **Steady saving** and offer those same custom
 curves. Existing level checkpoints are retained when valid. The **Savings plan**
-table shows cumulative targets and additions. Level plans also show class-training
-costs at their actual required levels; time plans show dates or play-time hours.
+table shows each cumulative goal in the right column. In level plans, **This
+level** shows a `+` scheduled addition and a `-` expense total, including selected,
+unpaid training and other purchases at their due levels. Hover the expense line
+to see the individual purchases and prices; unknown prices are flagged. Expenses
+are shown for planning and are not deducted again from the goal target or saved
+balance. Time plans show additions and targets by date or play-time hours.
 See [research, data sources, and limitations](docs/economy-research.md).
+
+The main page's **Goal for this level** section shows the selected goal's
+cumulative savings target and **Add this level**, its scheduled increase.
+It updates with your current or test level. Time goals show **Goal for now**
+using their calendar or play-time schedule. Training-only goals show the shared
+current-plus-two-level budget. Actual saved progress remains displayed above.
 
 ## Actual savings and progress
 
@@ -82,17 +102,25 @@ Old goals migrate to your current level with a safe initial allocation; old
 planned reserves are not treated as money you actually saved. Income received
 while logged out is not retrospectively assigned to goals.
 
-## Level-up progress
+## Goal progress notifications
 
 Leveling shows a small toast centered near the top of the screen with your saved
 progress and whether you are ahead, behind, or fully funded. A coin glows and
 the progress bars fill, then the toast fades away after six seconds. It shows
 up to two active goals by nearest deadline and notes any others.
 
+Hovering resets the six-second timer and holds the toast open at full visibility.
+Move the cursor away to resume the countdown. The progress-bar animation
+continues normally, and mouse clicks still pass through the toast.
+
+The same toast appears once on character login with **Welcome back!** and your
+current progress. It requires an active goal. Zoning, entering instances, and
+`/reload` do not trigger another login notification.
+
 The toast is silent, lets mouse clicks pass through, and waits until combat
 ends. Rapid level gains share one notification with the latest level. It does
-not add money to your goals. Use `/ge toasts` or **Settings** to toggle these
-notifications.
+not add money to your goals. Use `/ge toasts` or **Settings → Show goal progress
+notifications** to toggle both login and level-up notifications.
 
 Open **Settings** from the main page and press **Move toast** to drag a preview.
 Press the button again or **Escape** to save its position. Escape also closes the
@@ -123,6 +151,8 @@ ahead, behind, and fully funded states. Repeating the same balance does not add
 savings again. Goal edits, new goals, and ability choices made while gold testing
 is active stay in this copy. Resetting gold restores your original goals and
 editor fields; real income and spending received during testing remain recorded.
+To create a goal that survives reload, run `/ge testgold reset Quantum123`
+first. New goals created with a test wallet disappear when the test session ends.
 
 The window labels the **Test wallet** and **Test level**. Both overrides reset
 on `/reload`, logout, exiting the game, or changing characters and never change
@@ -155,7 +185,7 @@ checkboxes or separate rank choices.
 
 Each toggle saves immediately. **Back** returns to the goal; **Close** or Escape
 closes the window. Training prices remain assigned to their actual required levels
-in level plans. **Customize expenses** asks before opening itemized planning;
+in level plans. **Additional Expenses** asks before opening itemized planning;
 class training has its own button and page in the same window.
 
 Class training remains a **shared expense budget**, separate from your mount
@@ -177,8 +207,11 @@ Profession Training uses observed profession ranks and recipes. A riding quote
 replaces an itemized mount's starter estimate. You can also add manual expenses
 with individual amounts and due levels. Included, unpaid non-class expenses
 set an itemized goal's amount and follow its savings curve. Manual cost fields
-save on leaving the field; **New cost** starts another entry. Exclude manual costs
-once paid. Expense fields also save on Escape.
+save on leaving the field; **New cost** starts another entry. Use the small **x**
+on a manually added expense to delete it, or click its icon to include/exclude
+it. Deletion saves immediately. Class, profession, riding, and the original goal
+budget cannot be deleted; training retains its include/exclude controls.
+Expense fields also save on Escape.
 
 ## Before-purchase warnings
 
@@ -234,8 +267,12 @@ auctions. Confirm that repeat warnings stay quiet for two minutes after
 **Spend anyway**, then return when the cooldown expires. Check controller
 behavior and interactions with other addons too.
 Try `/ge testtoast Quantum123` to check the toast's placement, coin glow, progress bars,
-click-through behavior, and fade. Check a real level-up and its combat deferral
-too, then verify `/ge toasts` disables notifications.
+click-through behavior, and fade. Hover during fade-out to check that it becomes
+fully visible and stays open; move away to check the fresh countdown. Check a
+real level-up and its combat deferral too, then verify `/ge toasts` disables
+notifications.
+Log out and back in to check the welcome toast; zoning and `/reload` should not
+show it again.
 Use **Settings → Move toast** to check dragging, saving with a second button
 press or Escape, and restoration after reload or a resolution change.
 

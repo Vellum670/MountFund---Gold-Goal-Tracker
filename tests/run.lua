@@ -8,6 +8,7 @@ local function test(name, callback) callback(); tests=tests+1; print('PASS ' .. 
 local level, money, class = 25, 48705, 'WARRIOR'
 local elapsed = 1000
 local inCombat, sounds = false, 0
+local hoveredToast
 local knownSpells, services, messages, controls = {}, {}, {}, {}
 local function frame(parent)
     local value={parent=parent,scripts={},hidden=false}
@@ -35,6 +36,7 @@ local function frame(parent)
     function methods:SetVertexColor(r,g,b,a) self.color={r,g,b,a} end
     function methods:SetColorTexture(r,g,b,a) self.color={r,g,b,a} end
     function methods:SetAlpha(alpha) self.alpha=alpha end
+    function methods:SetValue(value) self.value=value end
     function methods:GetAlpha() return self.alpha or 1 end
     function methods:EnableMouse(enabled) self.mouseEnabled=enabled end
     function methods:EnableKeyboard(enabled) self.keyboardEnabled=enabled end
@@ -83,6 +85,7 @@ date=os.date
 GetTime=function() return elapsed end
 IsPlayerSpell=function(id) return knownSpells[id] or false end
 InCombatLockdown=function() return inCombat end
+MouseIsOver=function(target) return hoveredToast==target end
 PlaySound=function() sounds=sounds+1 end
 IsModifiedClick=function() return false end
 IsTradeskillTrainer=function() return false end
@@ -108,7 +111,7 @@ function GameTooltip:SetText(text) self:ClearLines(); self.text=tostring(text) e
 function GameTooltip:AddLine(text) self.lines=self.lines or {}; self.lines[#self.lines+1]=text end
 hooksecurefunc=function() end
 StaticPopup_Show=function() end
-loadAddon('Data/IncomeWeights.lua'); loadAddon('Data/ClassTraining.lua'); loadAddon('Model.lua'); loadAddon('Presets.lua')
+loadAddon('Data/IncomeWeights.lua'); loadAddon('Data/ClassTraining.lua'); loadAddon('Data/GoldTips.lua'); loadAddon('Model.lua'); loadAddon('Presets.lua')
 local names={[33388]='Apprentice Riding',[33391]='Journeyman Riding'}
 for _,entries in pairs(ns.ClassTrainingData) do for _,entry in ipairs(entries) do names[entry.spellID]=entry.name end end
 C_Spell={GetSpellName=function(id) return names[id] end,GetSpellTexture=function(id) return 'spell-icon:' .. id end}
@@ -126,14 +129,18 @@ local function reset(newLevel,newMoney)
     ns.db={version=2,goals={},trainerCatalog={},warnings=true,earnings={},levelUpToasts=true,playedSeconds=0}
     ns.lastMoney,ns.sessionStarted=money,true
     ns.lastLevelUpEvent=level
+    ns.loginToastHandled=nil
     elapsed,ns.warningCooldownUntil=1000,0
     ns.playStartedAt,ns.outOfWorld=nil,false
     ns.testEditorDraft,ns.testExpenseDraft=nil,nil
-    inCombat,sounds=false,0
+    inCombat,sounds,hoveredToast=false,0,nil
     wallClock=1792000000
     knownSpells,services,messages={},{},{}
     for _,entry in ipairs(ns.ClassTrainingData[class]) do if entry.level<level then knownSpells[entry.spellID]=true end end
-    if ns.ui then ns.RefreshTestContext(); ns.ui:Show() end
+    if ns.ui then
+        ns.ui.goldTipsOpened=false; ns.ui.goldTipBracket=nil
+        ns.RefreshTestContext(); ns.ui:Show(); ns.ui.goldTipsOpened=true
+    end
 end
 local function goal(target,finish,start)
     return {name='Goal',targetCopper=target or 1000000,targetLevel=finish or 40,startLevel=start or 25,
@@ -465,16 +472,16 @@ test('legacy goals migrate to the current level without claiming historical savi
     equal(g.savedCopper,9741); equal(ns.lastMoney,48705)
 end)
 
-test('the main UI is only slightly larger than the native trade window',function()
-    reset(); ns.ToggleUI(); equal(ns.ui.width,400); equal(ns.ui.height,450)
-    assert(ns.ui.width/344<1.2 and ns.ui.height/446<1.2)
+test('the main UI keeps its trade-window width with compact space for gold tips',function()
+    reset(); ns.ToggleUI(); equal(ns.ui.width,400); equal(ns.ui.height,560)
+    assert(ns.ui.width/344<1.2 and ns.ui.height<=560)
 end)
 test('new presets save immediately from the current level with a safe automatic allocation',function()
     reset(); ns.UsePreset('mount-first')
     equal(ns.ui.planRows[1],nil); assert(not ns.ui.planRows[25].hidden)
     equal(#ns.db.goals,1)
     equal(ns.db.goals[1].startLevel,25); equal(ns.db.goals[1].savedCopper,9741)
-    equal(ns.ui.initialAmount,nil); equal(ns.ui.initialPercent,nil); equal(ns.ui.planRows[25].addition.text,'')
+    equal(ns.ui.initialAmount,nil); equal(ns.ui.initialPercent,nil); equal(ns.ui.planRows[25].addition.text,'+ ' .. ns.MoneyText(0))
 end)
 test('insufficient training cash makes a presets automatic allocation zero',function()
     reset(25,20000); ns.UsePreset('mount-first')
@@ -502,7 +509,7 @@ test('new mount goals include class training and open its dedicated planner from
     back()
     local g=ns.db.goals[1]; equal(g.includeClassTraining,true); equal(g.targetCopper,1000000)
     assert(#g.expenses>50); equal(ns.TrainingRunway(),30000)
-    equal(ns.ui.planRows[26].training.text,ns.MoneyText(30000))
+    equal(ns.ui.planRows[26].expense.text,'- ' .. ns.MoneyText(30000))
 end)
 test('closing class training preserves changes saved by the icon click',function()
     local previous=#ns.db.goals[1].expenses
@@ -546,7 +553,7 @@ test('class icon clicks autosave immediately while preserving the separate main 
     reset(); ns.UsePreset('mount-first')
     equal(ns.db.goals[1].planMode,nil); equal(ns.TrainingRunway(),30000)
     click(ns.ui.editor,'Class training'); local button=expenseButton(6178); button.scripts.OnClick(button,'LeftButton')
-    equal(ns.TrainingRunway(),20000); equal(ns.ui.planRows[26].training.text,ns.MoneyText(20000))
+    equal(ns.TrainingRunway(),20000); equal(ns.ui.planRows[26].expense.text,'- ' .. ns.MoneyText(20000))
     assert(ns.ui.amount[1]:IsEnabled()); equal(ns.ui.amount[1].text,'100')
     equal(ns.db.goals[1].planMode,nil); equal(ns.db.goals[1].targetCopper,1000000)
     assert(ns.planningFrame:IsShown()); back()
@@ -1358,9 +1365,9 @@ test('menus share one window and Back returns through page history',function()
     click(ui,'Presets'); equal(ui.currentPage,'presets'); equal(ui.presetPicker.parent,ui); back()
     click(ui.editor,'Savings plan'); equal(ui.currentPage,'plan'); back()
     click(ui.editor,'Class training'); equal(ui.currentPage,'training'); equal(ns.planningFrame.parent,ui)
-    assert(ui.height<450); back(); equal(ui.height,450)
-    click(ui.editor,'Customize expenses'); equal(ui.currentPage,'planning')
-    click(ns.planningConsent,'Choose expenses'); equal(ui.currentPage,'expenses'); back(); equal(ui.currentPage,'main')
+    assert(ui.height<450); back(); equal(ui.height,560)
+    click(ui.editor,'Additional Expenses'); equal(ui.currentPage,'planning')
+    click(ns.planningConsent,'Additional Expenses'); equal(ui.currentPage,'expenses'); back(); equal(ui.currentPage,'main')
     for _,name in ipairs(UISpecialFrames) do
         assert(name~='GoldEnvelopeGoalPicker' and name~='GoldEnvelopePresetPicker' and name~='GoldEnvelopeExpensePlanner')
     end
@@ -1465,7 +1472,7 @@ test('Escape keeps incomplete input separate from the last valid goal and restor
     ns.ToggleUI(); equal(ns.ui.level.text,''); blur(ns.ui.level,'40'); equal(ns.db.editorDraft,nil)
 end)
 test('Escape saves unblurred expense fields and restores invalid expense drafts',function()
-    reset(); ns.UsePreset('mount-first'); click(ns.ui.editor,'Customize expenses'); click(ns.planningConsent,'Choose expenses')
+    reset(); ns.UsePreset('mount-first'); click(ns.ui.editor,'Additional Expenses'); click(ns.planningConsent,'Additional Expenses')
     ns.planningFrame.expenseName:SetText('Repairs'); ns.planningFrame.expenseAmount[2]:SetText('5')
     ns.planningFrame.expenseAmount[2].scripts.OnEscapePressed(ns.planningFrame.expenseAmount[2])
     local found=false; for _,e in ipairs(ns.db.goals[1].expenses) do if e.name=='Repairs' then found=true; equal(e.copper,500) end end
@@ -1530,22 +1537,23 @@ test('real earnings use real level priority even while a level is simulated',fun
     equal(byLevel.savedCopper,0); equal(byDate.savedCopper,1000)
 end)
 
-test('short savings plans fit their rows and time plans omit the empty training heading',function()
+test('short savings plans fit their rows and time plans keep the goal column visible',function()
     reset(39); ns.UsePreset('mount-first'); click(ns.ui.editor,'Savings plan')
     equal(ns.ui.currentPage,'plan'); equal(ns.ui.scroll.height,70); equal(ns.ui.height,196)
-    assert(ns.ui.trainingHeading:IsShown()); back(); equal(ns.ui.height,450)
+    assert(ns.ui.planTargetHeading:IsShown()); equal(ns.ui.planTargetHeading.text,'Goal for level'); back(); equal(ns.ui.height,560)
     ns.ui.basis.scripts.OnClick(); click(ns.ui.editor,'Savings plan')
-    equal(ns.ui.scroll.height,310); equal(ns.ui.height,436); equal(ns.ui.trainingHeading:IsShown(),false)
+    equal(ns.ui.scroll.height,310); equal(ns.ui.height,436)
+    assert(ns.ui.planTargetHeading:IsShown()); equal(ns.ui.planTargetHeading.text,'Goal target')
     back(); click(ns.ui,'Settings'); equal(ns.ui.height,310); back()
     click(ns.ui,'Presets'); equal(ns.ui.height,240); back()
 end)
 test('expense forms follow short grids without leaving the old empty area',function()
-    reset(); ns.UsePreset('profession-training'); click(ns.ui.editor,'Customize expenses')
-    click(ns.planningConsent,'Choose expenses'); local page=ns.planningFrame
+    reset(); ns.UsePreset('profession-training'); click(ns.ui.editor,'Additional Expenses')
+    click(ns.planningConsent,'Additional Expenses'); local page=ns.planningFrame
     equal(page.scroll.height,42); equal(ns.ui.height,323); equal(page.manual.point[3],-140)
     blur(page.expenseName,'Recipes'); blur(page.expenseAmount[1],'1')
     equal(page.scroll.height,54); equal(ns.ui.height,335); equal(page.manual.point[3],-152)
-    back(); equal(ns.ui.height,450)
+    back(); equal(ns.ui.height,560)
 end)
 test('observed overdue prices remain in the budget while icons show the next future rank',function()
     reset(30); knownSpells[6178]=nil
@@ -1663,6 +1671,566 @@ test('reused expense icons clear unknown-price tooltip flags when prices become 
     equal(ns.planningFrame.expenseButtons[1].unknown,nil)
     ns.planningFrame.expenseButtons[1].scripts.OnEnter(ns.planningFrame.expenseButtons[1])
     assert(not table.concat(GameTooltip.lines,'\n'):find('some prices unknown',1,true))
+end)
+
+test('main level target follows the selected goal and level preview without changing savings',function()
+    reset(); local first=goal(100000,35); first.name='First goal'; first.curve=1
+    first.initialCopper,first.savedCopper=10000,10000; first.milestones[30]=30000
+    local second=goal(200000,35); second.name='Second goal'; second.curve=1
+    ns.db.goals={first,second}; ns.RefreshTestContext()
+    equal(ns.ui.levelGoalHeading.text,'Goal for this level')
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(10000))
+    equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(0))
+    local original=copyData(ns.db)
+    SlashCmdList.GOLDENVELOPE('testlevel 30 Quantum123')
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(30000))
+    equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(4000))
+    assert(ns.GetBudget().expected>30000); sameData(ns.db,original)
+    click(ns.ui,'Goals'); ns.ui.goalPicker.rows[2].scripts.OnClick()
+    equal(ns.ui.currentPage,'main'); equal(ns.ui.levelGoalAmount.text,ns.MoneyText(100000))
+    equal(ns.ui.width,400); equal(ns.ui.height,560)
+end)
+
+test('main level target stops adding before the start and after the deadline',function()
+    reset(); local g=goal(100000,35); g.curve=1; g.initialCopper,g.savedCopper=10000,10000
+    ns.db.goals={g}; ns.RefreshTestContext()
+    SlashCmdList.GOLDENVELOPE('testlevel 24 Quantum123')
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(0))
+    equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(0))
+    SlashCmdList.GOLDENVELOPE('testlevel 35 Quantum123')
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(100000))
+    equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(9000))
+    SlashCmdList.GOLDENVELOPE('testlevel 36 Quantum123')
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(100000))
+    equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(0))
+end)
+
+test('main calendar target advances with the date independently of level',function()
+    reset(); local g=goal(100000,60); g.goalType='date'; g.curve=1
+    g.startTime,g.deadlineTime=wallClock-100,wallClock+100
+    ns.db.goals={g}; ns.RefreshTestContext()
+    equal(ns.ui.levelGoalHeading.text,'Goal for now')
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(50000))
+    equal(ns.ui.levelGoalDetail.text,'Based on your calendar deadline')
+    SlashCmdList.GOLDENVELOPE('testlevel 60 Quantum123')
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(50000))
+    wallClock=wallClock+50; ns.Changed()
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(75000))
+end)
+
+test('main play-time target advances only with the character play clock',function()
+    reset(); local g=goal(100000,60); g.goalType='played'; g.curve=1
+    g.startPlayed,g.durationSeconds=0,7200
+    ns.db.goals={g}; ns.db.playedSeconds=3600; ns.RefreshTestContext()
+    equal(ns.ui.levelGoalHeading.text,'Goal for now')
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(50000))
+    equal(ns.ui.levelGoalDetail.text,'Based on logged-in play time')
+    wallClock=wallClock+86400; ns.Changed()
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(50000))
+    ns.playStartedAt=elapsed; elapsed=elapsed+1800; ns.Changed()
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(75000))
+end)
+
+test('main target shows the shared upcoming budget for a training-only goal',function()
+    reset(); ns.UsePreset('class-training')
+    equal(ns.db.goals[1].targetCopper,0)
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(30000))
+    equal(ns.ui.levelGoalDetail.text,'Training for the current and next two levels')
+    equal(ns.ui.progress.text,'Training funded ' .. ns.MoneyText(30000) .. ' / ' .. ns.MoneyText(30000))
+end)
+
+test('main target guides an empty draft and updates after silent editing',function()
+    reset(); click(ns.ui,'New')
+    equal(ns.ui.levelGoalAmount.text,'')
+    equal(ns.ui.levelGoalDetail.text,'Create or choose a goal to see its target.')
+    blur(ns.ui.name,'New savings goal'); blur(ns.ui.amount[1],'5')
+    local g=ns.db.goals[1]
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(g.initialCopper))
+    equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(0))
+    equal(ns.ui.error.text,'')
+end)
+
+test('level expenses combine selected class training and other purchases without changing saved data',function()
+    reset(); local g=goal(); chooseTraining(g,{[6178]=true}); g.savedCopper=9000
+    local extras={
+        {key='manual:repairs',source='manual',name='Repairs',level=26,copper=300,selected=true},
+        {key='profession:recipe',source='profession',name='Recipe',level=26,copper=450,selected=true},
+        {key='mount:riding',source='mount-first',name='Riding',level=26,copper=600,selected=true},
+        {key='manual:excluded',source='manual',name='Excluded',level=26,copper=999,selected=false},
+        {key='manual:paid',source='manual',name='Already purchased',level=26,copper=500,selected=true,paid=true},
+        {key='profession:blocked',source='profession',name='Unavailable recipe',level=26,copper=400,selected=true,eligible=false},
+    }
+    for _,entry in ipairs(extras) do g.expenses[#g.expenses+1]=entry end
+    ns.db.trainerCatalog['live-charge']={source='class',class='WARRIOR',name='Charge',spellID=6178,level=26,copper=9000,paid=false}
+    ns.db.goals={g}; local before=copyData(ns.db)
+    local totals=ns.ExpensesByLevel(g)
+    equal(totals[26].total,10350); equal(totals[26].complete,true); equal(#totals[26].items,4)
+    local names={}; for _,entry in ipairs(totals[26].items) do names[entry.name]=entry.copper end
+    equal(names.Charge,9000); equal(names.Repairs,300); equal(names.Recipe,450); equal(names.Riding,600)
+    equal(names.Excluded,nil); equal(names['Already purchased'],nil); equal(names['Unavailable recipe'],nil)
+    sameData(ns.db,before)
+    knownSpells[6178]=true; totals=ns.ExpensesByLevel(g)
+    equal(totals[26].total,1350); equal(#totals[26].items,3); sameData(ns.db,before)
+end)
+
+test('class expense summaries honor the class-training toggle and current character class',function()
+    reset(); local g=goal(); chooseTraining(g,{[6178]=true})
+    g.expenses[#g.expenses+1]={key='manual:supplies',source='manual',name='Supplies',level=26,copper=500,selected=true}
+    g.includeClassTraining=false
+    local totals=ns.ExpensesByLevel(g); equal(totals[26].total,500); equal(#totals[26].items,1)
+    g.includeClassTraining=true; class='MAGE'; totals=ns.ExpensesByLevel(g)
+    local mageKeys={}; for _,entry in ipairs(ns.ClassCatalog()) do mageKeys[entry.key]=true end
+    for _,summary in pairs(totals) do
+        for _,entry in ipairs(summary.items) do
+            if entry.source=='class' then assert(mageKeys[entry.key]); assert(entry.key~='class:6178') end
+        end
+    end
+end)
+
+test('level expense summaries keep unknown prices distinct from known zero costs',function()
+    reset(); local g=goal(); g.expenses={
+        {key='manual:known',source='manual',name='Supplies',level=26,copper=500,selected=true},
+        {key='profession:unknown',source='profession',name='Unpriced recipe',level=26,selected=true},
+        {key='manual:free',source='manual',name='Free item',level=26,copper=0,selected=true},
+    }
+    local totals=ns.ExpensesByLevel(g)
+    equal(totals[26].total,500); equal(totals[26].complete,false); equal(#totals[26].items,3)
+    local unknown
+    for _,entry in ipairs(totals[26].items) do if entry.name=='Unpriced recipe' then unknown=entry end end
+    assert(unknown); equal(unknown.copper,nil)
+    g.expenses[2].selected=false; totals=ns.ExpensesByLevel(g)
+    equal(totals[26].complete,true); equal(#totals[26].items,2)
+end)
+
+test('level expenses do not count the same trainer purchase or recipe more than once',function()
+    reset(); local g=goal(); chooseTraining(g,{[6178]=true})
+    ns.db.trainerCatalog['charge-one']={source='class',class='WARRIOR',name='Charge',spellID=6178,level=26,copper=9000}
+    ns.db.trainerCatalog['charge-two']={source='class',class='WARRIOR',name='Charge',spellID=6178,level=26,copper=9000}
+    for _=1,2 do
+        g.expenses[#g.expenses+1]={key='profession:recipe',source='profession',name='Recipe',level=26,copper=500,selected=true}
+    end
+    local totals=ns.ExpensesByLevel(g)
+    equal(totals[26].total,9500); equal(#totals[26].items,2)
+end)
+
+test('savings-plan right column matches the selected goal target while changes and expenses stay in the middle',function()
+    reset(); local g=goal(100000,35); g.curve=1; g.initialCopper,g.savedCopper=10000,10000
+    g.milestones[30]=30000; g.expenses={{key='manual:repair',source='manual',name='Repairs',level=26,copper=700,selected=true}}
+    ns.db.goals={g}; ns.RefreshTestContext(); local mainTarget=ns.ui.levelGoalAmount.text
+    local before=copyData(ns.db); click(ns.ui.editor,'Savings plan')
+    equal(ns.ui.planChangeHeading.text,'This level'); equal(ns.ui.planTargetHeading.text,'Goal for level')
+    equal(ns.ui.planRows[25].target.text,mainTarget)
+    equal(ns.ui.planRows[25].addition.text,'+ ' .. ns.MoneyText(0))
+    for l=25,35 do
+        local row=ns.ui.planRows[l]
+        equal(row.target.text,ns.MoneyText(M.TargetAtLevel(g,l)))
+        equal(row.target.point[2],245); equal(row.target.width,105)
+        equal(row.addition.point[2],94); equal(row.addition.point[3],-3)
+        equal(row.expense.point[2],94); equal(row.expense.point[3],-19)
+        local addition=l==25 and 0 or M.TargetAtLevel(g,l)-M.TargetAtLevel(g,l-1)
+        equal(row.addition.text,'+ ' .. ns.MoneyText(addition))
+    end
+    equal(ns.ui.planRows[26].expense.text,'- ' .. ns.MoneyText(700))
+    equal(ns.ui.planRows[27].expense.text,'- ' .. ns.MoneyText(0))
+    back(); click(ns.ui.editor,'Savings plan'); sameData(ns.db,before)
+end)
+
+test('hovering a level expense shows its purchases and unknown costs without changing savings',function()
+    reset(); local g=goal(); g.expenses={
+        {key='manual:repair',source='manual',name='Repairs',level=26,copper=700,selected=true},
+        {key='profession:unknown',source='profession',name='Unpriced recipe',level=26,selected=true},
+        {key='manual:excluded',source='manual',name='Hidden expense',level=26,copper=1000,selected=false},
+    }
+    ns.db.goals={g}; ns.RefreshTestContext(); click(ns.ui.editor,'Savings plan'); local before=copyData(ns.db)
+    local row=ns.ui.planRows[26]
+    equal(row.expense.text,'- ' .. ns.MoneyText(700) .. ' ?'); equal(row.expenses.complete,false)
+    assert(row.expenseHover:IsShown()); equal(row.expenseHover.mouseEnabled,true)
+    row.expenseHover.scripts.OnEnter(row.expenseHover)
+    equal(GameTooltip.text,'Expenses at level 26')
+    local text=table.concat(GameTooltip.lines,'\n')
+    assert(text:find('Repairs',1,true)); assert(text:find(ns.MoneyText(700),1,true))
+    assert(text:find('Unpriced recipe',1,true)); assert(text:lower():find('unknown',1,true))
+    assert(not text:find('Hidden expense',1,true)); assert(GameTooltip:IsShown())
+    row.expenseHover.scripts.OnLeave(row.expenseHover); equal(GameTooltip:IsShown(),false)
+    local empty=ns.ui.planRows[27]; empty.expenseHover.scripts.OnEnter(empty.expenseHover)
+    equal(GameTooltip.text,'Expenses at level 27'); assert(#GameTooltip.lines>0)
+    assert(not table.concat(GameTooltip.lines,'\n'):find('Repairs',1,true))
+    empty.expenseHover.scripts.OnLeave(empty.expenseHover); sameData(ns.db,before)
+end)
+
+test('date and play-time plans keep targets on the right without assigning level expenses to time intervals',function()
+    reset(); local g=goal(100000,60); g.goalType='date'; g.curve=1
+    g.startTime,g.deadlineTime=wallClock-100,wallClock+100
+    g.expenses={{key='manual:repair',source='manual',name='Repairs',level=26,copper=700,selected=true}}
+    ns.db.goals={g}; ns.RefreshTestContext(); click(ns.ui.editor,'Savings plan')
+    equal(ns.ui.planChangeHeading.text,'This interval'); equal(ns.ui.planTargetHeading.text,'Goal target')
+    for step=0,10 do
+        local row=ns.ui.planRows[step]
+        equal(row.target.text,ns.MoneyText(step*10000)); equal(row.target.point[2],245)
+        equal(row.expense:IsShown(),false); equal(row.expenseHover:IsShown(),false)
+    end
+    back(); ns.ui.basis.scripts.OnClick(); click(ns.ui.editor,'Savings plan')
+    equal(ns.ui.planRows[0].target.text,ns.MoneyText(0)); equal(ns.ui.planRows[10].target.text,ns.MoneyText(100000))
+    for step=0,10 do equal(ns.ui.planRows[step].expenseHover:IsShown(),false) end
+end)
+
+test('initial character login shows current goal progress once after the world loads',function()
+    reset(); local g=goal(); g.savedCopper=9741; ns.db.goals={g}; ns.sessionStarted=false
+    eventFrame.scripts.OnEvent(nil,'PLAYER_LOGIN'); assert(not ns.levelUpToast:IsShown())
+    local before=copyData(ns.db)
+    eventFrame.scripts.OnEvent(nil,'PLAYER_ENTERING_WORLD',true,false); advanceToast(0.6)
+    local toast=shownToast(); equal(toast.title.text,'Welcome back!')
+    equal(toast.summary.reason,'login'); equal(toast.summary.level,25)
+    equal(toast.summary.goals[1].saved,9741); equal(toast.summary.preview,nil)
+    equal(toast.mouseEnabled,false); equal(toast.keyboardEnabled,false); equal(sounds,0)
+    sameData(ns.db,before); equal(money,48705)
+    advanceToast(7); assert(not toast:IsShown())
+    eventFrame.scripts.OnEvent(nil,'PLAYER_ENTERING_WORLD',true,false); advanceToast(0.6)
+    assert(not toast:IsShown()); sameData(ns.db,before)
+end)
+test('zoning instances and UI reload entries never trigger the login toast',function()
+    for _,entry in ipairs({{false,false},{false,true},{true,true}}) do
+        reset(); ns.db.goals={goal()}
+        eventFrame.scripts.OnEvent(nil,'PLAYER_ENTERING_WORLD',entry[1],entry[2]); advanceToast(0.6)
+        assert(not ns.levelUpToast:IsShown()); equal(ns.pendingLevelUpToast,nil)
+    end
+    reset(); ns.db.goals={goal()}
+    eventFrame.scripts.OnEvent(nil,'PLAYER_ENTERING_WORLD',true,false); advanceToast(0.6)
+    advanceToast(7); assert(not ns.levelUpToast:IsShown())
+    for _=1,3 do
+        eventFrame.scripts.OnEvent(nil,'PLAYER_LEAVING_WORLD')
+        eventFrame.scripts.OnEvent(nil,'PLAYER_ENTERING_WORLD',false,false); advanceToast(0.6)
+        assert(not ns.levelUpToast:IsShown()); equal(ns.pendingLevelUpToast,nil)
+    end
+end)
+test('login notifications respect the toast setting and require an active goal',function()
+    for _,mode in ipairs({'disabled','empty','paused'}) do
+        reset(); local g=goal()
+        if mode~='empty' then ns.db.goals={g} end
+        if mode=='disabled' then ns.db.levelUpToasts=false end
+        if mode=='paused' then g.active=false end
+        eventFrame.scripts.OnEvent(nil,'PLAYER_ENTERING_WORLD',true,false); advanceToast(0.6)
+        assert(not ns.levelUpToast:IsShown()); equal(ns.pendingLevelUpToast,nil)
+        ns.db.levelUpToasts=true; g.active=true; ns.db.goals={g}
+        eventFrame.scripts.OnEvent(nil,'PLAYER_ENTERING_WORLD',false,false); advanceToast(0.6)
+        assert(not ns.levelUpToast:IsShown())
+    end
+end)
+test('combat defers login progress and preserves its welcome message when interrupted',function()
+    reset(); local g=goal(); g.savedCopper=30000; ns.db.goals={g}; inCombat=true
+    eventFrame.scripts.OnEvent(nil,'PLAYER_ENTERING_WORLD',true,false); advanceToast(0.6)
+    assert(not ns.levelUpToast:IsShown()); equal(ns.pendingLevelUpToast.reason,'login')
+    money=7000; ns.ObserveMoney(); eventFrame.scripts.OnEvent(nil,'PLAYER_ENTERING_WORLD',false,false)
+    inCombat=false; eventFrame.scripts.OnEvent(nil,'PLAYER_REGEN_ENABLED'); advanceToast(0.6)
+    local toast=shownToast(); equal(toast.title.text,'Welcome back!'); equal(toast.summary.goals[1].saved,7000)
+    inCombat=true; advanceToast(0.1); assert(not toast:IsShown()); equal(ns.pendingLevelUpToast.reason,'login')
+    inCombat=false; eventFrame.scripts.OnEvent(nil,'PLAYER_REGEN_ENABLED'); advanceToast(0.6)
+    equal(shownToast().title.text,'Welcome back!')
+end)
+test('level-up notifications still use their level message after a login notification',function()
+    reset(); ns.db.goals={goal()}
+    eventFrame.scripts.OnEvent(nil,'PLAYER_ENTERING_WORLD',true,false); advanceToast(0.6)
+    equal(shownToast().title.text,'Welcome back!')
+    eventFrame.scripts.OnEvent(nil,'PLAYER_LEVEL_UP',26); advanceToast(0.6)
+    equal(shownToast().title.text,'Level 26!'); equal(ns.levelUpToast.summary.reason,nil)
+end)
+
+test('hover resets and holds toast dismissal without restarting its animation or capturing clicks',function()
+    reset(); local g=goal(); g.savedCopper=9741; ns.db.goals={g}; ns.TestLevelUpToast()
+    advanceToast(5.6); local toast=shownToast(); assert(toast:GetAlpha()<1)
+    local animationStart=toast.startedAt
+    hoveredToast=toast; advanceToast(0.1)
+    equal(toast:GetAlpha(),1); equal(toast.mouseEnabled,false); equal(toast.keyboardEnabled,false)
+    advanceToast(20); assert(toast:IsShown()); equal(toast:GetAlpha(),1)
+    equal(toast.startedAt,animationStart); equal(toast.rows[1].bar.value,toast.rows[1].percent)
+    hoveredToast=nil; advanceToast(5.1); assert(toast:IsShown()); equal(toast:GetAlpha(),1)
+    advanceToast(0.3); assert(toast:IsShown()); assert(toast:GetAlpha()<1)
+    advanceToast(0.7); equal(toast:IsShown(),false); equal(toast.expiresAt,nil)
+end)
+test('every new hover restores the full timer and a later toast starts clean',function()
+    reset(); ns.db.goals={goal()}; ns.TestLevelUpToast(); advanceToast(0.6)
+    local toast=shownToast(); hoveredToast=toast; advanceToast(0.1)
+    hoveredToast=nil; advanceToast(4.5); assert(toast:IsShown())
+    hoveredToast=toast; advanceToast(0.1); equal(toast:GetAlpha(),1)
+    hoveredToast=nil; advanceToast(5.9); assert(toast:IsShown())
+    advanceToast(0.2); equal(toast:IsShown(),false)
+    ns.TestLevelUpToast(); advanceToast(6.1); equal(toast:IsShown(),false)
+end)
+test('combat still hides a hovered login toast and resumes its normal timer afterwards',function()
+    reset(); ns.db.goals={goal()}; ns.QueueLoginToast(); advanceToast(0.6)
+    local toast=shownToast(); hoveredToast=toast; advanceToast(0.1)
+    inCombat=true; advanceToast(0.1); equal(toast:IsShown(),false)
+    equal(toast.expiresAt,nil); equal(ns.pendingLevelUpToast.reason,'login')
+    hoveredToast=nil; advanceToast(20); inCombat=false
+    eventFrame.scripts.OnEvent(nil,'PLAYER_REGEN_ENABLED'); advanceToast(0.6)
+    equal(shownToast().title.text,'Welcome back!')
+    advanceToast(5.5); equal(toast:IsShown(),false)
+end)
+
+local function additionalExpenseNamed(name)
+    for _,button in ipairs(ns.planningFrame.expenseButtons) do
+        if button:IsShown() and button.expense.name==name then return button end
+    end
+    error('Expense not found: ' .. name)
+end
+test('the main button consent and expense page use Additional Expenses',function()
+    reset(); ns.UsePreset('mount-first'); equal(ns.ui.planning.text,'Additional Expenses')
+    click(ns.ui.editor,'Additional Expenses'); equal(ns.ui.title.text,'Additional Expenses')
+    click(ns.planningConsent,'Additional Expenses'); equal(ns.ui.title.text,'Additional Expenses')
+    back(); equal(ns.ui.planning.text,'Additional Expenses')
+end)
+test('deleting a manual expense clears its editor and invalid draft without recreating it',function()
+    reset(); ns.UsePreset('mount-first'); local saved=ns.db.goals[1].savedCopper
+    click(ns.ui.editor,'Additional Expenses'); click(ns.planningConsent,'Additional Expenses')
+    blur(ns.planningFrame.expenseName,'Repairs'); blur(ns.planningFrame.expenseAmount[2],'5')
+    equal(ns.db.goals[1].targetCopper,1000500)
+    blur(ns.planningFrame.expenseLevel,'100'); assert(ns.db.expenseDraft)
+    local button=additionalExpenseNamed('Repairs'); assert(button.deleteExpense:IsShown())
+    button.deleteExpense.scripts.OnEnter(button.deleteExpense); equal(GameTooltip.text,'Delete Repairs')
+    button.deleteExpense.scripts.OnClick(button.deleteExpense)
+    equal(ns.planningFrame.expenseName.text,''); equal(ns.planningFrame.manualKey,nil); equal(ns.db.expenseDraft,nil)
+    equal(ns.db.goals[1].targetCopper,1000000); equal(ns.db.goals[1].savedCopper,saved); equal(money,48705)
+    ns.CloseUI(); ns.ToggleUI(); back(); click(ns.ui.editor,'Additional Expenses')
+    for _,expense in ipairs(ns.db.goals[1].expenses) do assert(expense.name~='Repairs') end
+    equal(ns.db.goals[1].targetCopper,1000000)
+end)
+test('training and original goal costs never expose deletion and reject stale delete clicks',function()
+    reset(); local g=goal(); g.planMode='items'; g.includeClassTraining=true
+    g.expenses={
+        {key='manual:repairs',source='manual',name='Repairs',level=26,copper=500,selected=true},
+        {key='manual:initial',source='manual',name='Mount budget',level=40,copper=1000000,selected=true},
+        {key='profession:one',source='profession',name='Blacksmithing',level=30,copper=1000,selected=true},
+        {key='mount:one',source='mount-first',name='Riding',level=40,copper=800000,selected=true},
+    }
+    ns.OpenExpensePlanner(g,function() end)
+    local first=additionalExpenseNamed('Repairs'); local deleteControl=first.deleteExpense
+    deleteControl.scripts.OnClick(deleteControl)
+    for _,name in ipairs({'Mount budget','Blacksmithing','Riding'}) do
+        local button=additionalExpenseNamed(name)
+        assert(not button.deleteExpense or not button.deleteExpense:IsShown())
+    end
+    local before=copyData(ns.planningFrame.goal)
+    assert(not deleteControl:IsShown()); deleteControl.scripts.OnClick(deleteControl)
+    sameData(ns.planningFrame.goal,before)
+    ns.OpenTrainingPlanner(g,function() end)
+    for _,button in ipairs(ns.planningFrame.expenseButtons) do
+        if button:IsShown() then assert(not button.deleteExpense or not button.deleteExpense:IsShown()) end
+    end
+end)
+test('deleting added manual costs retains profession quotes and class-training budgets',function()
+    reset(); ns.db.trainerCatalog['profession:quote']={key='profession:quote',source='profession',class='WARRIOR',name='Blacksmithing',level=30,copper=1000}
+    ns.UsePreset('profession-training'); click(ns.ui.editor,'Additional Expenses'); click(ns.planningConsent,'Additional Expenses')
+    local training=ns.TrainingRunway()
+    blur(ns.planningFrame.expenseName,'Supplies'); blur(ns.planningFrame.expenseAmount[2],'5')
+    local button=additionalExpenseNamed('Supplies'); button.deleteExpense.scripts.OnClick(button.deleteExpense)
+    for _=1,3 do ns.SyncExpenses(ns.db.goals[1]); ns.RefreshExpensePlanner() end
+    equal(ns.db.goals[1].targetCopper,1000); equal(ns.TrainingRunway(),training)
+    assert(ns.db.trainerCatalog['profession:quote'])
+    local recipe=additionalExpenseNamed('Blacksmithing'); assert(not recipe.deleteExpense or not recipe.deleteExpense:IsShown())
+    for _,expense in ipairs(ns.db.goals[1].expenses) do assert(expense.name~='Supplies') end
+end)
+test('deleting the last added expense releases its savings without changing the wallet',function()
+    reset(); local g=goal(10000); g.planMode='items'; g.savedCopper=10000
+    g.expenses={{key='manual:only',source='manual',name='Supplies',level=40,copper=10000,selected=true}}
+    ns.db.goals={g}; ns.RefreshTestContext(); click(ns.ui.editor,'Additional Expenses')
+    local button=additionalExpenseNamed('Supplies'); button.deleteExpense.scripts.OnClick(button.deleteExpense)
+    equal(ns.db.goals[1].targetCopper,0); equal(ns.db.goals[1].savedCopper,0); equal(money,48705)
+    equal(#ns.db.goals[1].expenses,0); assert(M.ValidateGoal(ns.db.goals[1]))
+    back(); click(ns.ui.editor,'Additional Expenses'); equal(#ns.planningFrame.goal.expenses,0)
+end)
+test('manual expense deletion during gold testing does not change real saved goals',function()
+    reset(); local g=goal(12000); g.planMode='items'
+    g.expenses={{key='manual:current',source='manual',name='Supplies',level=40,copper=12000,selected=true}}
+    ns.db.goals={g}; ns.RefreshTestContext(); local before=copyData(ns.db)
+    SlashCmdList.GOLDENVELOPE('testgold 100 Quantum123'); click(ns.ui.editor,'Additional Expenses')
+    local button=additionalExpenseNamed('Supplies'); button.deleteExpense.scripts.OnClick(button.deleteExpense)
+    equal(ns.testGoals[1].targetCopper,0); equal(#ns.testGoals[1].expenses,0); sameData(ns.db,before)
+    SlashCmdList.GOLDENVELOPE('testgold reset Quantum123')
+    equal(ns.db.goals[1].targetCopper,12000); equal(#ns.db.goals[1].expenses,1)
+end)
+
+test('main goal deletion clears saved drafts and stays inside the visible page',function()
+    reset(); ns.UsePreset('mount-first')
+    local main=ns.ui.pages.main
+    assert(-ns.ui.editor.point[3]-ns.ui.delete.point[3]+ns.ui.delete.height<=main.height)
+    click(ns.ui.editor,'Additional Expenses'); click(ns.planningConsent,'Additional Expenses')
+    blur(ns.planningFrame.expenseName,'Repairs'); blur(ns.planningFrame.expenseLevel,'100')
+    assert(ns.db.expenseDraft); back(); blur(ns.ui.level,''); assert(ns.db.editorDraft)
+    ns.ui.delete.scripts.OnClick()
+    equal(#ns.db.goals,0); equal(ns.db.editorDraft,nil); equal(ns.db.expenseDraft,nil)
+    equal(ns.ui.delete:IsEnabled(),false); equal(ns.GetBudget().saved,0); equal(money,48705)
+    ns.CloseUI(); ns.ToggleUI(); equal(#ns.db.goals,0); equal(ns.ui.name.text,'')
+end)
+test('Goals lists a working Delete button for every goal and keeps the current selection',function()
+    reset(); local a,b,c=goal(10000),goal(10000),goal(10000)
+    a.name,b.name,c.name='Alpha','Beta','Gamma'; a.savedCopper,b.savedCopper,c.savedCopper=1000,2000,3000
+    ns.db.goals={a,b,c}; ns.RefreshTestContext(); click(ns.ui,'Goals')
+    local rows=ns.ui.goalPicker.rows
+    for index=1,3 do assert(rows[index].deleteGoal:IsShown()); equal(rows[index].deleteGoal.text,'Delete') end
+    rows[2].deleteGoal.scripts.OnEnter(rows[2].deleteGoal); equal(GameTooltip.text,'Delete Beta')
+    rows[2].deleteGoal.scripts.OnClick()
+    equal(ns.ui.currentPage,'goals'); equal(#ns.db.goals,2)
+    equal(ns.db.goals[1].name,'Alpha'); equal(ns.db.goals[2].name,'Gamma'); equal(ns.ui.name.text,'Alpha')
+    equal(rows[3]:IsShown(),false); equal(rows[3].deleteGoal:IsShown(),false)
+    rows[1].deleteGoal.scripts.OnClick()
+    equal(#ns.db.goals,1); equal(ns.ui.name.text,'Gamma'); equal(ns.db.goals[1].savedCopper,3000)
+    rows[1].scripts.OnClick(); equal(ns.ui.currentPage,'main'); equal(ns.ui.name.text,'Gamma')
+    equal(money,48705)
+end)
+test('deleting another goal reindexes and preserves the selected goals unfinished fields',function()
+    reset(); local a,b,c=goal(),goal(),goal()
+    a.name,b.name,c.name='Alpha','Beta','Gamma'; ns.db.goals={a,b,c}; ns.RefreshTestContext()
+    click(ns.ui,'Goals'); ns.ui.goalPicker.rows[3].scripts.OnClick()
+    click(ns.ui.editor,'Additional Expenses'); click(ns.planningConsent,'Additional Expenses')
+    blur(ns.planningFrame.expenseName,'Repairs'); blur(ns.planningFrame.expenseLevel,'100'); back()
+    blur(ns.ui.level,''); click(ns.ui,'Goals')
+    equal(ns.db.editorDraft.index,3); equal(ns.db.expenseDraft.index,3)
+    ns.ui.goalPicker.rows[1].deleteGoal.scripts.OnClick()
+    equal(ns.db.editorDraft.index,2); equal(ns.db.expenseDraft.index,2); equal(ns.ui.level.text,'')
+    equal(ns.db.goals[2].name,'Gamma'); back(); blur(ns.ui.level,'40')
+    click(ns.ui.editor,'Additional Expenses'); equal(ns.planningFrame.expenseLevel.text,'100')
+    equal(ns.db.goals[2].name,'Gamma')
+end)
+test('a new unfinished draft survives deleting every saved goal from the list',function()
+    reset(); ns.UsePreset('mount-first'); click(ns.ui,'New')
+    ns.ui.name:SetText('Draft goal'); ns.ui.level:SetText(''); click(ns.ui,'Goals')
+    assert(ns.db.editorDraft); equal(ns.db.editorDraft.index,2)
+    ns.ui.goalPicker.rows[1].deleteGoal.scripts.OnClick()
+    equal(#ns.db.goals,0); equal(ns.db.editorDraft.index,1); equal(ns.ui.name.text,'Draft goal'); equal(ns.ui.level.text,'')
+    back(); blur(ns.ui.level,'40'); equal(#ns.db.goals,1); equal(ns.db.goals[1].name,'Draft goal')
+end)
+test('deleting a training goal retains all trainer costs and the actual wallet',function()
+    reset(); ns.db.trainerCatalog['charge']={source='class',class='WARRIOR',name='Charge',spellID=6178,level=26,copper=9000}
+    ns.UsePreset('class-training'); local before=copyData(ns.db.trainerCatalog)
+    ns.ui.delete.scripts.OnClick(); equal(#ns.db.goals,0); sameData(ns.db.trainerCatalog,before)
+    equal(ns.TrainingRunway(ns.NewPresetGoal('class-training')),29000); equal(money,48705)
+end)
+test('goal deletion in a simulated wallet is limited to its session copies',function()
+    reset(); local a,b=goal(10000),goal(10000); a.name,b.name='Alpha','Beta'
+    a.savedCopper,b.savedCopper=7000,9000; ns.db.goals={a,b}; ns.RefreshTestContext()
+    local before=copyData(ns.db); SlashCmdList.GOLDENVELOPE('testgold 100 Quantum123')
+    ns.ui.delete.scripts.OnClick(); equal(#ns.testGoals,1); equal(ns.testGoals[1].name,'Beta')
+    click(ns.ui,'Goals'); ns.ui.goalPicker.rows[1].deleteGoal.scripts.OnClick()
+    equal(#ns.testGoals,0); sameData(ns.db,before)
+    SlashCmdList.GOLDENVELOPE('testgold reset Quantum123')
+    equal(#ns.db.goals,2); equal(ns.ui.name.text,'Alpha'); equal(ns.db.goals[1].savedCopper,7000)
+end)
+
+test('reload saves a newly created goal even while its fields still have focus',function()
+    reset(); ns.EnsureUI(); click(ns.ui,'New')
+    ns.ui.name:SetText('Reload goal'); ns.ui.amount[1]:SetText('75')
+    equal(#ns.db.goals,0)
+    eventFrame.scripts.OnEvent(nil,'PLAYER_LOGOUT')
+    equal(#ns.db.goals,1); equal(ns.db.goals[1].name,'Reload goal'); equal(ns.db.goals[1].targetCopper,750000)
+    assert(M.ValidateGoal(ns.db.goals[1]))
+    local previousGlobal=GoldEnvelopeDB
+    GoldEnvelopeDB=copyData(ns.db)
+    eventFrame.scripts.OnEvent(nil,'ADDON_LOADED','GoldEnvelope')
+    ns.sessionStarted=false; eventFrame.scripts.OnEvent(nil,'PLAYER_LOGIN')
+    equal(#ns.db.goals,1); equal(ns.db.goals[1].name,'Reload goal'); equal(ns.db.goals[1].targetCopper,750000)
+    GoldEnvelopeDB=previousGlobal
+end)
+
+test('logout saves focused edits to an existing real goal',function()
+    reset(); ns.UsePreset('mount-first')
+    ns.ui.name:SetText('Renamed mount'); ns.ui.amount[1]:SetText('125')
+    eventFrame.scripts.OnEvent(nil,'PLAYER_LOGOUT')
+    equal(#ns.db.goals,1); equal(ns.db.goals[1].name,'Renamed mount'); equal(ns.db.goals[1].targetCopper,1250000)
+    assert(M.ValidateGoal(ns.db.goals[1]))
+end)
+test('reload preserves unfinished input without replacing the last valid goal',function()
+    reset(); ns.UsePreset('mount-first'); local previous=copyData(ns.db.goals)
+    ns.ui.name:SetText('Unfinished mount'); ns.ui.level:SetText('')
+    eventFrame.scripts.OnEvent(nil,'PLAYER_LOGOUT')
+    sameData(ns.db.goals,previous); assert(ns.db.editorDraft)
+    local previousGlobal=GoldEnvelopeDB
+    GoldEnvelopeDB=copyData(ns.db)
+    eventFrame.scripts.OnEvent(nil,'ADDON_LOADED','GoldEnvelope')
+    ns.sessionStarted=false; eventFrame.scripts.OnEvent(nil,'PLAYER_LOGIN')
+    -- A fresh UI after reload starts hidden, without an old frame's OnHide.
+    ns.ui.hidden=true
+    ns.ToggleUI()
+    equal(ns.ui.name:GetText(),'Unfinished mount'); equal(ns.ui.level:GetText(),'')
+    sameData(ns.db.goals,previous)
+    GoldEnvelopeDB=previousGlobal
+end)
+test('logout flushes a focused additional expense into its real goal',function()
+    reset(); ns.UsePreset('mount-first'); click(ns.ui.editor,'Additional Expenses'); click(ns.planningConsent,'Additional Expenses')
+    ns.planningFrame.expenseName:SetText('Reload supplies'); ns.planningFrame.expenseAmount[2]:SetText('5')
+    eventFrame.scripts.OnEvent(nil,'PLAYER_LOGOUT')
+    local found=false
+    for _,expense in ipairs(ns.db.goals[1].expenses) do
+        if expense.name=='Reload supplies' then found=true; equal(expense.copper,500) end
+    end
+    assert(found); assert(M.ValidateGoal(ns.db.goals[1]))
+end)
+test('focused new test-wallet goals are discarded on reload without altering real goals',function()
+    reset(); ns.UsePreset('mount-first'); local previous=copyData(ns.db)
+    SlashCmdList.GOLDENVELOPE('testgold 100 Quantum123'); click(ns.ui,'New')
+    ns.ui.name:SetText('Temporary test goal'); ns.ui.amount[1]:SetText('50')
+    eventFrame.scripts.OnEvent(nil,'PLAYER_LOGOUT')
+    sameData(ns.db,previous); equal(ns.testGoals,nil); equal(ns.testMoneyCopper,nil)
+    local previousGlobal=GoldEnvelopeDB
+    GoldEnvelopeDB=copyData(ns.db)
+    eventFrame.scripts.OnEvent(nil,'ADDON_LOADED','GoldEnvelope')
+    ns.sessionStarted=false; eventFrame.scripts.OnEvent(nil,'PLAYER_LOGIN')
+    sameData(ns.db,previous); equal(#ns.db.goals,1)
+    GoldEnvelopeDB=previousGlobal
+end)
+
+test('gold tips cover every level and switch to endgame ideas at 60',function()
+    for current=1,60 do
+        local bracket=ns.GetGoldTipBracket(current)
+        assert(bracket); equal(#bracket.tips,current==60 and 15 or 3)
+    end
+    for _,boundary in ipairs({{10,11},{20,21},{30,31},{40,41},{50,51},{59,60}}) do
+        assert(ns.GetGoldTipBracket(boundary[1])~=ns.GetGoldTipBracket(boundary[2]))
+    end
+    equal(ns.GetGoldTipBracket(0),nil); equal(ns.GetGoldTipBracket(61),nil)
+end)
+test('main page tips browse full context and retain the selected tip during refreshes',function()
+    reset(); ns.EnsureUI(); ns.RefreshUI()
+    equal(ns.ui.goldTipHeading.text,'Gold tips: Levels 21–30'); equal(ns.ui.goldTipCount.text,'1/3')
+    assert(ns.ui.goldTipText.text:find("Spider's Silk",1,true))
+    ns.ui.goldTipNext.scripts.OnClick(); equal(ns.ui.goldTipCount.text,'2/3')
+    assert(ns.ui.goldTipText.text:find('Hillsbrad',1,true))
+    ns.RefreshUI(); equal(ns.ui.goldTipCount.text,'2/3')
+    ns.ui.goldTips.scripts.OnEnter(ns.ui.goldTips)
+    equal(GameTooltip.text,'Swiftthistle from Briarthorn and Mageroyal')
+    assert(GameTooltip.lines[1]:find('Swiftness Potions',1,true))
+    ns.ui.goldTipPrevious.scripts.OnClick(); ns.ui.goldTipPrevious.scripts.OnClick()
+    equal(ns.ui.goldTipCount.text,'3/3'); assert(ns.ui.goldTipText.text:find('Free Action Potions',1,true))
+    ns.ui.goldTipNext.scripts.OnClick(); equal(ns.ui.goldTipCount.text,'1/3')
+    assert(-ns.ui.goldTips.point[3]+ns.ui.goldTips.height<=ns.ui.pages.main.height)
+    click(ns.ui,'Settings'); equal(ns.ui.goldTips:IsShown(),false); back(); equal(ns.ui.goldTips:IsShown(),true)
+end)
+test('level preview switches gold tips without changing saved goals or the wallet',function()
+    reset(); ns.UsePreset('mount-first'); local previous=copyData(ns.db)
+    SlashCmdList.GOLDENVELOPE('testlevel 60 Quantum123')
+    equal(ns.ui.goldTipHeading.text,'Gold tips: Level 60'); equal(ns.ui.goldTipCount.text,'1/15')
+    ns.ui.goldTipPrevious.scripts.OnClick(); equal(ns.ui.goldTipCount.text,'15/15')
+    assert(ns.ui.goldTipText.text:find('Engineering 1–150',1,true))
+    SlashCmdList.GOLDENVELOPE('testlevel reset Quantum123')
+    equal(ns.ui.goldTipHeading.text,'Gold tips: Levels 21–30'); equal(ns.ui.goldTipCount.text,'1/3')
+    sameData(ns.db,previous); equal(money,48705)
+    level=31; ns.RefreshUI(); equal(ns.ui.goldTipHeading.text,'Gold tips: Levels 31–40')
+end)
+
+test('each window reopening cycles tips while page changes and refreshes keep the current tip',function()
+    reset(); ns.UsePreset('mount-first'); equal(ns.ui.goldTipCount.text,'1/3')
+    local previous=copyData(ns.db)
+    ns.CloseUI(); ns.ToggleUI(); equal(ns.ui.goldTipCount.text,'2/3')
+    ns.RefreshUI(); equal(ns.ui.goldTipCount.text,'2/3')
+    click(ns.ui,'Settings'); back(); equal(ns.ui.goldTipCount.text,'2/3')
+    ns.CloseUI(); ns.ToggleUI(); equal(ns.ui.goldTipCount.text,'3/3')
+    ns.CloseUI(); ns.ToggleUI(); equal(ns.ui.goldTipCount.text,'1/3')
+    sameData(ns.db,previous)
+    SlashCmdList.GOLDENVELOPE('testlevel 60 Quantum123')
+    equal(ns.ui.goldTipCount.text,'1/15')
+    for index=2,15 do
+        ns.CloseUI(); ns.ToggleUI(); equal(ns.ui.goldTipCount.text,index .. '/15')
+    end
+    ns.CloseUI(); ns.ToggleUI(); equal(ns.ui.goldTipCount.text,'1/15')
 end)
 
 print(tests .. ' tests passed')

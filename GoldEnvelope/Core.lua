@@ -241,6 +241,7 @@ end
 
 local function Initialize()
     ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals = nil, nil, nil
+    ns.loginToastHandled = nil
     ns.CancelPurchase()
     if ns.HideLevelUpToast then ns.HideLevelUpToast() end
     GoldEnvelopeDB = type(GoldEnvelopeDB) == "table" and GoldEnvelopeDB or {}
@@ -266,14 +267,26 @@ for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_LOGOUT", "PLAYE
     "TRAINER_UPDATE", "TRAINER_SERVICE_INFO_NAME_UPDATE" }) do
     frame:RegisterEvent(event)
 end
-frame:SetScript("OnEvent", function(_, event, arg)
+frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
     if event == "ADDON_LOADED" and arg == addonName then Initialize() end
     if not ns.db then return end
     if event == "PLAYER_LOGIN" then StartSession() end
-    if event=="PLAYER_ENTERING_WORLD" then ns.outOfWorld=false; if not ns.playStartedAt then ns.playStartedAt=GetTime() end end
+    if event=="PLAYER_ENTERING_WORLD" then
+        ns.outOfWorld=false; if not ns.playStartedAt then ns.playStartedAt=GetTime() end
+        -- The initial-login flag excludes zoning, instances, and UI reloads.
+        if not ns.loginToastHandled then
+            ns.loginToastHandled=true
+            if arg==true and not isReloadingUi and ns.QueueLoginToast then ns.QueueLoginToast() end
+        end
+    end
     if event=="PLAYER_LEAVING_WORLD" then ns.outOfWorld=true; ns.FlushPlayClock() end
     if (event=="DISPLAY_SIZE_CHANGED" or event=="UI_SCALE_CHANGED") and ns.ApplyToastPosition then ns.ApplyToastPosition() end
     if event == "PLAYER_LOGOUT" then
+        -- /reload does not reliably blur the focused edit box before saving
+        -- SavedVariables. Flush while the editor still has its original goal
+        -- context, including the session-only wallet when testing.
+        if ns.ui and ns.ui:IsShown() and ns.SaveAllFields then ns.SaveAllFields(true) end
+        if ns.FinishToastMove then ns.FinishToastMove() end
         ns.FlushPlayClock()
         ns.outOfWorld=true
         ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals = nil, nil, nil
@@ -431,7 +444,7 @@ SlashCmdList.GOLDENVELOPE = function(message)
         ns.db.levelUpToasts = not ns.db.levelUpToasts
         if not ns.db.levelUpToasts and ns.HideLevelUpToast then ns.HideLevelUpToast() end
         ns.Changed()
-        ns.Print("Level-up goal updates " .. (ns.db.levelUpToasts and "enabled." or "disabled."))
+        ns.Print("Goal progress notifications " .. (ns.db.levelUpToasts and "enabled." or "disabled."))
     else
         ns.ToggleUI()
     end

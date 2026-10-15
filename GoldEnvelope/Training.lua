@@ -112,6 +112,46 @@ function ns.TrainingByLevel(goal)
     return totals, unknown
 end
 
+-- Display purchases at their due levels without moving or spending saved gold.
+function ns.ExpensesByLevel(goal)
+    local levels,selections,seen={},{},{}
+    for _,expense in ipairs(goal.expenses or {}) do
+        if expense.source=="class" then selections[expense.key]=expense.selected end
+    end
+    local function add(expense)
+        if not expense.level or expense.level>goal.targetLevel then return end
+        local identity=expense.source=="class" and (expense.spellID or expense.key) or expense.key
+        local key=(expense.source or "manual") .. ":" .. tostring(identity)
+        if seen[key] then return end
+        seen[key]=true
+        local entry=levels[expense.level]
+        if not entry then entry={total=0,complete=true,items={}}; levels[expense.level]=entry end
+        entry.items[#entry.items+1]={name=expense.name,rank=expense.rank,source=expense.source,
+            copper=expense.copper,key=expense.key}
+        if expense.copper~=nil then entry.total=entry.total+expense.copper else entry.complete=false end
+    end
+    if goal.includeClassTraining then
+        local classRanks={}
+        for _,expense in ipairs(ns.ClassCatalog()) do
+            local key=expense.spellID or expense.key; local previous=classRanks[key]
+            if not previous or expense.key=="class:" .. tostring(expense.spellID) then classRanks[key]=expense end
+        end
+        for _,expense in pairs(classRanks) do
+            if selections[expense.key]~=false and not expense.paid and expense.eligible~=false then add(expense) end
+        end
+    end
+    for _,expense in ipairs(goal.expenses or {}) do
+        if expense.source~="class" and expense.selected and not expense.paid and expense.eligible~=false then add(expense) end
+    end
+    for _,entry in pairs(levels) do
+        table.sort(entry.items,function(a,b)
+            if a.name~=b.name then return a.name<b.name end
+            return tostring(a.key)<tostring(b.key)
+        end)
+    end
+    return levels
+end
+
 -- An optional roster merges its active training choices with a staged goal.
 -- This keeps an initial allocation from taking another goal's training money.
 function ns.TrainingRunway(goal, force, goals, levelOverride)

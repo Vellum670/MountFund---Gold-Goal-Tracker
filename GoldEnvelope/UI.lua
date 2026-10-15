@@ -51,12 +51,15 @@ end
 
 local function coins(parent, x, y)
     local controls = {}
+    local fieldWidth,iconSize,gap=38,16,5
+    -- InputBoxTemplate's visible left border extends five units past the field.
+    local spacing=fieldWidth+iconSize+gap*2+5
     for i, part in ipairs({ "Gold", "Silver", "Copper" }) do
-        local fieldX = x + (i - 1) * 64
-        controls[i] = edit(parent, fieldX, y, 38, "", true)
+        local fieldX = x + (i - 1) * spacing
+        controls[i] = edit(parent, fieldX, y, fieldWidth, "", true)
         local icon = parent:CreateTexture(nil, "ARTWORK")
-        icon:SetSize(16, 16)
-        icon:SetPoint("TOPLEFT", fieldX + 43, y - 4)
+        icon:SetSize(iconSize, iconSize)
+        icon:SetPoint("LEFT",controls[i],"RIGHT",gap,0)
         icon:SetTexture(coinTextures[i])
         controls[i]:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
@@ -115,7 +118,7 @@ end
 ns.UI = { Label = label, Button = button, Edit = edit, Coins = coins, SetCoins = setCoins,
     GetCoins = getCoins, Window = window }
 
-local createUI, showEditor, saveCurrentGoal, refreshGoalList
+local createUI, showEditor, saveCurrentGoal, refreshGoalList, deleteGoal
 local function tooltip(control,title,body)
     control:SetScript("OnEnter",function(self)
         GameTooltip:SetOwner(self,"ANCHOR_RIGHT"); GameTooltip:SetText(title)
@@ -149,10 +152,21 @@ function ns.SetPageTitle(key,title)
     ns.ui.pages[key].pageTitle=title
     if ns.ui.currentPage==key then ns.ui.title:SetText(title) end
 end
-function ns.SaveAllFields()
+local function editorInputs()
+    local ui=ns.ui
+    return {ui.name:GetText(),ui.level:GetText(),ui.amount[1]:GetText(),ui.amount[2]:GetText(),ui.amount[3]:GetText()}
+end
+local function editorInputsChanged()
+    local previous=ns.ui.savedEditorInputs or {}
+    for index,value in ipairs(editorInputs()) do
+        if value~=previous[index] then return true end
+    end
+    return false
+end
+function ns.SaveAllFields(onlyPending)
     if not ns.ui or ns.ui.updatingEditor then return end
     if ns.FlushExpenseFields then ns.FlushExpenseFields() end
-    if ns.ui.currentPage=="main" then saveCurrentGoal() end
+    if ns.ui.currentPage=="main" and (not onlyPending or editorInputsChanged()) then saveCurrentGoal() end
     if ns.ui.currentPage=="settings" then
         ns.db.warnings=ns.ui.warnings:GetChecked() and true or false
         ns.db.levelUpToasts=ns.ui.toastToggle:GetChecked() and true or false
@@ -225,7 +239,7 @@ local function refreshEditorControls()
     local curve=Model.CURVES[draft.curve]
     ui.curve:SetText(curve.name)
     tooltip(ui.curve,curve.name,curve.description)
-    ui.planning:SetText(draft.planMode=="items" and "Choose expenses" or "Customize expenses")
+    ui.planning:SetText("Additional Expenses")
     local mode=draft.goalType or "level"
     ui.basis:SetText(mode=="date" and "By calendar date" or mode=="played" and "By play time" or "By level")
     ui.level:SetNumeric(mode=="level")
@@ -241,8 +255,9 @@ local function renderPlan(goal)
     for _,row in pairs(ui.planRows) do row:Hide() end
     local timed=Model.IsTimeGoal(goal)
     ui.planHeading:SetText(timed and "Time progress" or "Level")
-    ui.trainingHeading:SetShown(not timed)
-    local training=goal.includeClassTraining and ns.TrainingByLevel(goal) or {}
+    ui.planChangeHeading:SetText(timed and "This interval" or "This level")
+    ui.planTargetHeading:SetText(timed and "Goal target" or "Goal for level")
+    local expenses=not timed and ns.ExpensesByLevel(goal) or {}
     local first=goal.startLevel or ns.GetPlayerLevel(); local last=math.max(first,goal.targetLevel)
     if timed then first,last=0,10 end
     for step=first,last do
@@ -251,9 +266,26 @@ local function renderPlan(goal)
             row=CreateFrame("Frame",nil,ui.planContent); row:SetSize(350,35)
             row.background=row:CreateTexture(nil,"BACKGROUND"); row.background:SetAllPoints()
             row.level=label(row,"",0,-3,88,"GameFontHighlightSmall")
-            row.target=label(row,"",94,-3,140,"GameFontHighlightSmall")
-            row.addition=label(row,"",94,-19,140,"GameFontDisableSmall")
-            row.training=label(row,"",245,-3,105,"GameFontHighlightSmall"); ui.planRows[step]=row
+            row.target=label(row,"",245,-3,105,"GameFontHighlightSmall")
+            row.addition=label(row,"",94,-3,140,"GameFontHighlightSmall")
+            row.expense=label(row,"",94,-19,140,"GameFontDisableSmall")
+            row.expenseHover=CreateFrame("Frame",nil,row); row.expenseHover:SetPoint("TOPLEFT",94,-17); row.expenseHover:SetSize(140,17); row.expenseHover:EnableMouse(true)
+            row.expenseHover:SetScript("OnEnter",function(self)
+                local parent=self:GetParent(); local costs=parent.expenses
+                if not parent.planLevel then GameTooltip:Hide(); return end
+                GameTooltip:SetOwner(self,"ANCHOR_RIGHT"); GameTooltip:SetText("Expenses at level " .. parent.planLevel)
+                if not costs or #costs.items==0 then GameTooltip:AddLine("Nothing due at this level.",1,1,1)
+                else
+                    for _,item in ipairs(costs.items) do
+                        local rank=item.rank and item.rank~="" and " (" .. item.rank .. ")" or ""
+                        GameTooltip:AddLine(item.name .. rank .. " - " .. (item.copper~=nil and ns.MoneyText(item.copper) or "Unknown price"),1,1,1,true)
+                    end
+                    GameTooltip:AddLine("Total " .. ns.MoneyText(costs.total) .. (not costs.complete and " + unknown prices" or ""),1,0.82,0,true)
+                end
+                GameTooltip:Show()
+            end)
+            row.expenseHover:SetScript("OnLeave",function() GameTooltip:Hide() end)
+            ui.planRows[step]=row
         end
         row:ClearAllPoints(); row:SetPoint("TOPLEFT",0,-(step-first)*35)
         local target,previous,current
@@ -263,12 +295,16 @@ local function renderPlan(goal)
             previous=step==0 and target or math.floor(initial+(goal.targetCopper-initial)*((step-1)/10)^(goal.curve==0 and 1 or goal.curve))
             row.level:SetText(goal.goalType=="played" and string.format("%.1fh",fraction*goal.durationSeconds/3600)
                 or date("%m/%d",goal.startTime+fraction*(goal.deadlineTime-goal.startTime)))
-            row.training:SetText(""); current=math.floor(Model.ScheduleFraction(goal,ns.GetPlayerLevel())*10)==step
+            current=math.floor(Model.ScheduleFraction(goal,ns.GetPlayerLevel())*10)==step
         else
             target=Model.TargetAtLevel(goal,step); previous=step==first and target or Model.TargetAtLevel(goal,step-1)
-            row.level:SetText(step); row.training:SetText(ns.MoneyText(training[step] or 0)); current=step==ns.GetPlayerLevel()
+            row.level:SetText(step); current=step==ns.GetPlayerLevel()
         end
-        row.target:SetText(ns.MoneyText(target)); row.addition:SetText(step==first and "" or "+ " .. ns.MoneyText(math.max(0,target-previous)))
+        row.planLevel=not timed and step or nil; row.expenses=expenses[step]
+        row.expense:SetText(not timed and ("- " .. ns.MoneyText(row.expenses and row.expenses.total or 0)
+            .. (row.expenses and not row.expenses.complete and " ?" or "")) or "")
+        row.expense:SetShown(not timed); row.expenseHover:SetShown(not timed)
+        row.target:SetText(ns.MoneyText(target)); row.addition:SetText("+ " .. ns.MoneyText(math.max(0,target-previous)))
         row.background:SetColorTexture(0.65,0.48,0.22,current and 0.35 or (step%2==0 and 0.07 or 0)); row:Show()
     end
     local contentHeight=math.max(1,(last-first+1)*35)
@@ -296,6 +332,7 @@ showEditor=function(updated,restore)
         ui.name:SetText(restore.name); ui.level:SetText(restore.deadline)
         for i,field in ipairs(ui.amount) do field:SetText(restore.coins[i]) end
     end
+    ui.savedEditorInputs=editorInputs()
     refreshEditorControls(); ui.error:SetText(""); ui.updatingEditor=false; ns.RefreshUI()
 end
 function ns.RefreshTestContext()
@@ -310,10 +347,35 @@ saveCurrentGoal=function()
     if not goal then storeInputDraft(); ns.ui.error:SetText(err); return false end
     ns.GetGoals()[selected]=goal; Model.Reconcile(ns.GetGoals(),ns.GetPlayerMoney())
     draft=copyGoal(goal)
+    ns.ui.savedEditorInputs=editorInputs()
     if ns.testMoneyCopper~=nil then ns.testEditorDraft=nil else ns.db.editorDraft=nil end
     refreshEditorControls()
     if ns.UpdateOpenPlannerGoal then ns.UpdateOpenPlannerGoal(goal) end
     ns.Changed(); ns.ui.error:SetText(""); return true
+end
+deleteGoal=function(index)
+    local goals=ns.GetGoals(); if not goals[index] then return end
+    local testing=ns.testMoneyCopper~=nil
+    local buffers=testing and ns or ns.db
+    local editorKey=testing and "testEditorDraft" or "editorDraft"
+    local expenseKey=testing and "testExpenseDraft" or "expenseDraft"
+    for _,key in ipairs({editorKey,expenseKey}) do
+        local pending=buffers[key]
+        if pending then
+            if pending.index==index then buffers[key]=nil
+            elseif pending.index>index then pending.index=pending.index-1 end
+        end
+    end
+    table.remove(goals,index)
+    if selected>index then selected=selected-1
+    elseif selected==index then selected=math.min(index,#goals) end
+    local pending=buffers[editorKey]
+    if not (pending and pending.index==selected and selected==#goals+1) then
+        selected=math.max(1,math.min(selected,math.max(1,#goals)))
+    end
+    Model.Reconcile(goals,ns.GetPlayerMoney())
+    if pending and pending.index==selected then showEditor(copyGoal(pending.goal),pending) else showEditor() end
+    ns.CancelPurchase(); GameTooltip:Hide(); ns.Changed()
 end
 local function applyPlannerChoices(updated)
     local choices=copyGoal(updated)
@@ -346,9 +408,24 @@ function ns.CatalogChanged()
     if draft then ns.SyncExpenses(draft); if draft.planMode=="items" then setCoins(ns.ui.amount,draft.targetCopper) end end
     ns.RefreshUI(); if ns.RefreshExpensePlanner then ns.RefreshExpensePlanner() end
 end
+local function refreshGoldTips(step)
+    local ui=ns.ui
+    if not ui or not ui.goldTips then return end
+    local bracket=ns.GetGoldTipBracket(ns.GetPlayerLevel())
+    ui.goldTips:SetShown(bracket~=nil)
+    if not bracket then return end
+    if ui.goldTipBracket~=bracket then ui.goldTipBracket=bracket; ui.goldTipIndex=1 end
+    ui.goldTipIndex=((ui.goldTipIndex-1+(step or 0))%#bracket.tips)+1
+    local tip=bracket.tips[ui.goldTipIndex]
+    ui.goldTipHeading:SetText("Gold tips: " .. bracket.label)
+    ui.goldTipCount:SetText(ui.goldTipIndex .. "/" .. #bracket.tips)
+    ui.goldTipText:SetText("|cffffd36e" .. tip.title .. "|r\n" .. tip.text)
+    tooltip(ui.goldTips,tip.title,tip.text)
+end
 function ns.RefreshUI()
     if not ns.ui or not ns.db then return end
     local ui=ns.ui; local budget=ns.GetBudget()
+    refreshGoldTips()
     ui.summary:SetText((ns.testMoneyCopper~=nil and "Test wallet " or "Wallet ") .. ns.MoneyText(budget.balance)
         .. (ns.testPlayerLevel and "  [Test level " .. ns.testPlayerLevel .. "]" or "")
         .. "\nSaved " .. ns.MoneyText(budget.saved) .. "  |  " .. (budget.behind>0 and "Behind " or "Ahead ")
@@ -356,6 +433,25 @@ function ns.RefreshUI()
     if draft then
         local saved=ns.GetGoals()[selected]; if saved then draft.savedCopper=saved.savedCopper end
         local g=saved or draft; local progress=Model.GoalProgress(g,ns.GetPlayerLevel())
+        local timed=Model.IsTimeGoal(g); local trainingOnly=g.targetCopper==0 and g.includeClassTraining
+        ui.levelGoalHeading:SetText(timed and "Goal for now" or "Goal for this level")
+        if not saved and g.name=="" and g.targetCopper==0 then
+            ui.levelGoalAmount:SetText(""); ui.levelGoalDetail:SetText("Create or choose a goal to see its target.")
+        else
+            ui.levelGoalAmount:SetText(ns.MoneyText(trainingOnly and budget.trainingDue or progress.expected))
+            if trainingOnly then ui.levelGoalDetail:SetText("Training for the current and next two levels")
+            elseif timed then ui.levelGoalDetail:SetText(g.goalType=="date" and "Based on your calendar deadline" or "Based on logged-in play time")
+            else
+                local level=ns.GetPlayerLevel()
+                local addition=level>(g.startLevel or level) and math.max(0,progress.expected-Model.TargetAtLevel(g,level-1)) or 0
+                ui.levelGoalDetail:SetText("Add this level " .. ns.MoneyText(addition))
+            end
+        end
+        tooltip(ui.levelGoal,timed and "Goal for now" or "Goal for this level",
+            (trainingOnly and "The shared training budget for your current level and the next two levels."
+            or timed and "The total amount planned by now on this goal's calendar or play-time schedule."
+            or "The total amount planned to be saved toward this goal by your current level. Add this level shows the scheduled increase.")
+            .. (g.active==false and " This goal is paused." or ""))
         if g.targetCopper==0 and g.includeClassTraining then
             ui.progress:SetText("Training funded " .. ns.MoneyText(budget.trainingFunded) .. " / " .. ns.MoneyText(budget.trainingDue))
         else ui.progress:SetText(ns.MoneyText(progress.saved) .. " / " .. ns.MoneyText(progress.target) .. "  |  "
@@ -368,13 +464,23 @@ function ns.RefreshUI()
 end
 refreshGoalList=function()
     local picker=ns.ui.goalPicker; if not picker then return end
-    picker.rows=picker.rows or {}; for _,row in ipairs(picker.rows) do row:Hide() end
+    picker.rows=picker.rows or {}
+    for _,row in ipairs(picker.rows) do row:Hide(); row.deleteGoal:Hide() end
     for index,goal in ipairs(ns.GetGoals()) do
         local choice=index; local row=picker.rows[index]
-        if not row then row=button(picker.content,"",0,0,350,function() end); picker.rows[index]=row end
+        if not row then
+            row=button(picker.content,"",0,0,264,function() end)
+            row.deleteGoal=button(picker.content,"Delete",272,0,78,function() end)
+            picker.rows[index]=row
+        end
         row:ClearAllPoints(); row:SetPoint("TOPLEFT",0,-(index-1)*34)
+        row.deleteGoal:ClearAllPoints(); row.deleteGoal:SetPoint("TOPLEFT",272,-(index-1)*34)
+        row.deleteGoal:SetScript("OnClick",function() deleteGoal(choice) end)
+        tooltip(row.deleteGoal,"Delete " .. goal.name,"Remove this goal and its plan. Your actual gold and trainer data are kept.")
+        row.deleteGoal:Show()
         local deadline=goal.goalType=="date" and date("%m/%d",goal.deadlineTime) or goal.goalType=="played" and string.format("%.1fh",goal.durationSeconds/3600) or "Lv " .. goal.targetLevel
         row:SetText(goal.name .. " (" .. deadline .. ")")
+        tooltip(row,goal.name,"Click to edit this goal.")
         row:SetScript("OnClick",function() ns.SaveAllFields(); selected=choice; showEditor(); ns.ShowMainPage() end); row:Show()
     end
     picker.content:SetHeight(math.max(1,#ns.GetGoals()*34))
@@ -393,7 +499,8 @@ local function settingsPage()
     tooltip(ns.ui.warnings,"Purchase confirmations","Checks supported merchant, trainer, repair, and auction purchases before they use protected money. It does not lock your wallet.")
     ns.ui.warnings:SetScript("OnClick",function(self) ns.db.warnings=self:GetChecked() and true or false; ns.CancelPurchase() end)
     ns.ui.toastToggle=CreateFrame("CheckButton",nil,page,"UICheckButtonTemplate"); ns.ui.toastToggle:SetPoint("TOPLEFT",0,-97)
-    label(page,"Show level-up goal progress",34,-105,332,"GameFontHighlightSmall")
+    label(page,"Show goal progress notifications",34,-105,332,"GameFontHighlightSmall")
+    tooltip(ns.ui.toastToggle,"Goal progress notifications","Show goal progress on login and level-up. Zoning and UI reloads do not trigger a notification.")
     ns.ui.toastToggle:SetScript("OnClick",function(self) ns.db.levelUpToasts=self:GetChecked() and true or false; if not ns.db.levelUpToasts then ns.HideLevelUpToast() end end)
     ns.ui.moveToast=button(page,"Move toast",0,-150,230,function() ns.ToggleToastMove() end)
     button(page,"Reset position",238,-150,130,function() ns.ResetToastPosition() end)
@@ -401,21 +508,25 @@ local function settingsPage()
     ns.RefreshUI(); ns.ShowPage("settings")
 end
 createUI=function()
-    local ui=window("GoldEnvelopeWindow",400,450,"Gold Envelope"); ns.ui=ui
+    local ui=window("GoldEnvelopeWindow",400,560,"Gold Envelope"); ns.ui=ui
     ui.pages,ui.history={},{}
     ui.error=label(ui,"",16,0,368,"GameFontHighlightSmall"); ui.error:ClearAllPoints(); ui.error:SetPoint("BOTTOMLEFT",16,12); ui.error:SetTextColor(1,0.65,0.35)
     button(ui,"Close",326,-14,60,ns.CloseUI)
     ui.back=button(ui,"Back",16,-14,70,ns.GoBack); ui.back:Hide()
-    local main=makePage("main","Gold Envelope",450); main:Show(); ui.currentPage="main"
+    local main=makePage("main","Gold Envelope",560); main:SetHeight(482); main:Show(); ui.currentPage="main"
     ui.summary=label(main,"",0,0,368,"GameFontHighlightSmall")
     button(main,"Goals",0,-43,74,function() ns.ShowPage("goals") end)
     button(main,"New",82,-43,54,function() ns.SaveAllFields(); selected=#ns.GetGoals()+1; showEditor() end)
     button(main,"Presets",144,-43,86,function() ns.ShowPage("presets") end)
     button(main,"Settings",238,-43,130,settingsPage)
-    local editor=CreateFrame("Frame",nil,main); editor:SetPoint("TOPLEFT",0,-82); editor:SetSize(368,240); ui.editor=editor
+    local editor=CreateFrame("Frame",nil,main); editor:SetPoint("TOPLEFT",0,-82); editor:SetSize(368,282); ui.editor=editor
     ui.selection=label(editor,"",0,0,368); ui.progress=label(editor,"",0,-19,368,"GameFontHighlightSmall")
-    label(editor,"Name",0,-49,85); ui.name=edit(editor,94,-43,260)
-    ui.basis=button(editor,"By level",0,-79,162,function()
+    ui.levelGoal=CreateFrame("Frame",nil,editor); ui.levelGoal:SetPoint("TOPLEFT",0,-40); ui.levelGoal:SetSize(368,32); ui.levelGoal:EnableMouse(true)
+    ui.levelGoalHeading=label(ui.levelGoal,"Goal for this level",0,0,180,"GameFontNormalSmall")
+    ui.levelGoalAmount=label(ui.levelGoal,"",184,0,184,"GameFontHighlightSmall"); ui.levelGoalAmount:SetJustifyH("RIGHT")
+    ui.levelGoalDetail=label(ui.levelGoal,"",0,-18,368,"GameFontDisableSmall")
+    label(editor,"Name",0,-89,85); ui.name=edit(editor,94,-83,260)
+    ui.basis=button(editor,"By level",0,-119,162,function()
         local mode=draft.goalType or "level"
         draft.goalType=mode=="level" and "date" or mode=="date" and "played" or "level"
         draft.milestones={}
@@ -428,21 +539,35 @@ createUI=function()
         else ui.level:SetText(tostring(math.min(60,math.max(40,ns.GetPlayerLevel()+1)))) end
         refreshEditorControls(); saveCurrentGoal()
     end)
-    ui.level=edit(editor,180,-79,174,"40")
-    label(editor,"Goal amount",0,-121,90); ui.amount=coins(editor,94,-115)
-    ui.active=CreateFrame("CheckButton",nil,editor,"UICheckButtonTemplate"); ui.active:SetPoint("TOPLEFT",-4,-148)
-    label(editor,"Track this goal",30,-157,164,"GameFontHighlightSmall"); ui.active:SetScript("OnClick",saveCurrentGoal)
-    ui.training=button(editor,"Class training",200,-149,168,planClassTraining)
-    ui.curve=button(editor,"Income-based",0,-183,178,function()
+    ui.basisIndicator=ui.basis:CreateFontString(nil,"OVERLAY","GameFontNormalLarge")
+    ui.basisIndicator:SetPoint("RIGHT",-8,0); ui.basisIndicator:SetText(">")
+    tooltip(ui.basis,"Change goal type","Click to cycle: Level > Calendar date > Play time.")
+    ui.level=edit(editor,180,-119,174,"40")
+    label(editor,"Goal amount",0,-161,90); ui.amount=coins(editor,94,-155)
+    ui.active=CreateFrame("CheckButton",nil,editor,"UICheckButtonTemplate"); ui.active:SetPoint("TOPLEFT",-4,-188)
+    label(editor,"Track this goal",30,-197,164,"GameFontHighlightSmall"); ui.active:SetScript("OnClick",saveCurrentGoal)
+    ui.training=button(editor,"Class training",186,-189,182,planClassTraining)
+    ui.curve=button(editor,"Income-based",0,-223,178,function()
         draft.curve=(draft.curve+1)%5; if Model.IsTimeGoal(draft) and draft.curve==0 then draft.curve=1 end
         refreshEditorControls(); saveCurrentGoal()
     end)
-    ui.planning=button(editor,"Customize expenses",186,-183,182,planCurrentGoal)
-    button(editor,"Savings plan",0,-217,178,function() ns.ShowPage("plan") end)
-    ui.delete=button(editor,"Delete goal",186,-217,182,function()
-        table.remove(ns.GetGoals(),selected); selected=math.max(1,math.min(selected,#ns.GetGoals())); showEditor(); ns.Changed()
-    end)
+    ui.planning=button(editor,"Additional Expenses",186,-223,182,planCurrentGoal)
+    button(editor,"Savings plan",0,-257,178,function() ns.ShowPage("plan") end)
+    ui.delete=button(editor,"Delete goal",186,-257,182,function() deleteGoal(selected) end)
+    tooltip(ui.delete,"Delete goal","Remove the selected goal and its plan. Your actual gold and trainer data are kept.")
     for _,field in ipairs({ui.name,ui.level,unpack(ui.amount)}) do field:SetScript("OnEditFocusLost",saveCurrentGoal) end
+    local tipDivider=main:CreateTexture(nil,"BORDER")
+    tipDivider:SetPoint("TOPLEFT",0,-368); tipDivider:SetSize(368,1)
+    tipDivider:SetColorTexture(0.65,0.48,0.22,0.4)
+    ui.goldTips=CreateFrame("Frame",nil,main); ui.goldTips:SetPoint("TOPLEFT",0,-374); ui.goldTips:SetSize(368,108); ui.goldTips:EnableMouse(true)
+    ui.goldTipHeading=label(ui.goldTips,"",0,0,270,"GameFontNormalSmall")
+    ui.goldTipText=label(ui.goldTips,"",0,-26,368,"GameFontHighlightSmall")
+    ui.goldTipText:SetHeight(82); ui.goldTipText:SetWordWrap(true)
+    ui.goldTipPrevious=button(ui.goldTips,"<",276,-2,24,function() refreshGoldTips(-1) end)
+    ui.goldTipCount=label(ui.goldTips,"",302,-7,40,"GameFontHighlightSmall"); ui.goldTipCount:SetJustifyH("CENTER")
+    ui.goldTipNext=button(ui.goldTips,">",344,-2,24,function() refreshGoldTips(1) end)
+    tooltip(ui.goldTipPrevious,"Previous gold tip","Browse gold-making ideas for your current level bracket.")
+    tooltip(ui.goldTipNext,"Next gold tip","Browse gold-making ideas for your current level bracket.")
     local goals=makePage("goals","Your goals",340); ui.goalPicker=goals
     goals.scroll=CreateFrame("ScrollFrame",nil,goals,"UIPanelScrollFrameTemplate"); goals.scroll:SetPoint("TOPLEFT",0,0); goals.scroll:SetSize(354,240)
     goals.content=CreateFrame("Frame",nil,goals.scroll); goals.content:SetSize(350,1); goals.scroll:SetScrollChild(goals.content)
@@ -454,13 +579,21 @@ createUI=function()
     end
     local plan=makePage("plan","Savings plan",450); ui.plan=plan
     ui.planHeading=label(plan,"Level",0,0,90,"GameFontNormalSmall")
-    label(plan,"Goal target / addition",94,0,140,"GameFontNormalSmall"); ui.trainingHeading=label(plan,"Training due",245,0,105,"GameFontNormalSmall")
+    ui.planChangeHeading=label(plan,"This level",94,0,140,"GameFontNormalSmall"); ui.planTargetHeading=label(plan,"Goal for level",245,0,105,"GameFontNormalSmall")
     ui.scroll=CreateFrame("ScrollFrame",nil,plan,"UIPanelScrollFrameTemplate"); ui.scroll:SetPoint("TOPLEFT",0,-25); ui.scroll:SetSize(354,310)
     ui.planContent=CreateFrame("Frame",nil,ui.scroll); ui.planContent:SetSize(350,1); ui.scroll:SetScrollChild(ui.planContent); ui.planRows={}
     plan:SetScript("OnShow",function() if draft then renderPlan(ns.GetGoals()[selected] or draft) end end)
+    plan:SetScript("OnHide",function() GameTooltip:Hide() end)
     -- Settings controls exist before any refresh, but the page stays hidden.
     settingsPage(); ui.history={}; ns.ShowPage("main",true)
     ui:SetScript("OnHide",function() ns.SaveAllFields(); if ns.FinishToastMove then ns.FinishToastMove() end; GameTooltip:Hide() end)
+    -- Only reopening the outer window advances a tip; page changes and
+    -- periodic progress refreshes keep the current tip in place.
+    ui:SetScript("OnShow",function()
+        refreshGoldTips(ui.goldTipsOpened and 1 or 0)
+        ui.goldTipsOpened=true
+    end)
+    ui.goldTipsOpened=ui:IsShown()
 end
 function ns.ToggleUI()
     local existing=ns.ui

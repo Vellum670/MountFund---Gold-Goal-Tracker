@@ -2,11 +2,12 @@
 ## Title: Gold Envelope
 ## Notes: Savings goals by level, date, or play time, with protected spending confirmations.
 ## Author: WoW-Forever-Addon
-## Version: 0.4.1
+## Version: 0.4.13
 ## SavedVariablesPerCharacter: GoldEnvelopeDB
 
 Data/IncomeWeights.lua
 Data/ClassTraining.lua
+Data/GoldTips.lua
 Model.lua
 Presets.lua
 Core.lua
