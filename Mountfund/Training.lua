@@ -2,6 +2,63 @@
 local _, ns = ...
 local Model = ns.Model
 
+-- Character-wide choices are keyed by class and ability, never by spell rank.
+local abilityNames, localizedAbilities = {}, {}
+for class, ranks in pairs(ns.ClassTrainingData) do
+    abilityNames[class], localizedAbilities[class] = {}, {}
+    for _, rank in ipairs(ranks) do abilityNames[class][rank.spellID] = rank.name end
+end
+
+function ns.TrainingAbilityKey(expense)
+    local class = expense.class
+    if not class then local _, playerClass = UnitClass("player"); class = playerClass end
+    local name = abilityNames[class] and abilityNames[class][expense.spellID]
+        or localizedAbilities[class] and localizedAbilities[class][expense.name] or expense.name
+    return class .. ":" .. name
+end
+
+function ns.GetTrainingSelections(real)
+    if not real and (ns.testMoneyCopper ~= nil or ns.testPlayerLevel ~= nil) and ns.testTrainingSelections then
+        return ns.testTrainingSelections
+    end
+    return ns.db.classTrainingSelections
+end
+
+function ns.InitializeTrainingSelections(extra, real)
+    local choices = {}
+    local function inherit(goal)
+        for _, expense in ipairs(goal.expenses or {}) do
+            if expense.source == "class" then
+                local key = ns.TrainingAbilityKey(expense)
+                if expense.selected == false then choices[key] = false
+                elseif choices[key] == nil then choices[key] = true end
+            end
+        end
+    end
+    for _, goal in ipairs(real and ns.db.goals or ns.GetGoals()) do inherit(goal) end
+    if extra then inherit(extra) end
+    return choices
+end
+
+function ns.SetTrainingAbility(expense, selected, staged)
+    local preview = ns.testMoneyCopper ~= nil or ns.testPlayerLevel ~= nil
+    local choices = ns.GetTrainingSelections()
+    local updated = {}
+    for key, value in pairs(choices or ns.InitializeTrainingSelections(staged)) do updated[key] = value end
+    updated[ns.TrainingAbilityKey(expense)] = selected
+    if preview then ns.testTrainingSelections = updated else ns.db.classTrainingSelections = updated end
+    if not preview or ns.testGoals then
+        for _, goal in ipairs(ns.GetGoals()) do ns.SyncExpenses(goal) end
+    end
+    ns.Changed()
+end
+
+local function classSelected(expense, fallback, real)
+    local choices = ns.GetTrainingSelections(real)
+    if choices then return choices[ns.TrainingAbilityKey(expense)] ~= false end
+    return fallback ~= false
+end
+
 local function validSpellID(value)
     return type(value) == "number" and value > 0 and value < math.huge and value == math.floor(value)
 end
@@ -88,6 +145,7 @@ function ns.ClassCatalog()
         for key, value in pairs(base) do entry[key] = value end
         entry.key, entry.source, entry.class = "class:" .. base.spellID, "class", class
         entry.name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(base.spellID) or base.name
+        localizedAbilities[class][entry.name] = base.name
         entry.paid, entry.priceSource = known(base.spellID), "base price"
         entry.requiresSpell=prerequisites[base.name] or base.requiresSpell
         entry.eligible = not entry.requiresSpell or known(entry.requiresSpell) or knownAbilities[base.name]==true
@@ -155,7 +213,7 @@ function ns.TrainingByLevel(goal)
         if expense.source == "class" then selections[expense.key] = expense.selected end
     end
     for _, entry in ipairs(ns.ClassCatalog()) do
-        if selections[entry.key] ~= false and not entry.paid and entry.eligible then
+        if classSelected(entry, selections[entry.key]) and not ns.ClassTrainingRetired() and not entry.paid and entry.eligible then
             if entry.copper then totals[entry.level] = (totals[entry.level] or 0) + entry.copper else unknown = unknown + 1 end
         end
     end
@@ -180,14 +238,14 @@ function ns.ExpensesByLevel(goal)
             copper=expense.copper,key=expense.key}
         if expense.copper~=nil then entry.total=entry.total+expense.copper else entry.complete=false end
     end
-    if goal.includeClassTraining then
+    if (ns.GetTrainingSelections() or goal.includeClassTraining) and not ns.ClassTrainingRetired() then
         local classRanks={}
         for _,expense in ipairs(ns.ClassCatalog()) do
             local key=expense.spellID or expense.key; local previous=classRanks[key]
             if not previous or expense.key=="class:" .. tostring(expense.spellID) then classRanks[key]=expense end
         end
         for _,expense in pairs(classRanks) do
-            if selections[expense.key]~=false and not expense.paid and expense.eligible~=false then add(expense) end
+            if classSelected(expense, selections[expense.key]) and not expense.paid and expense.eligible~=false then add(expense) end
         end
     end
     for _,expense in ipairs(goal.expenses or {}) do
@@ -204,9 +262,12 @@ end
 
 -- An optional roster merges its active training choices with a staged goal.
 -- This keeps an initial allocation from taking another goal's training money.
-function ns.TrainingRunway(goal, force, goals, levelOverride)
+function ns.TrainingRunway(goal, force, goals, levelOverride, real)
     local level = levelOverride or ns.GetPlayerLevel()
-    local enabled, selected = force or (goal and goal.includeClassTraining), {}
+    real = real or goals == ns.db.goals
+    if ns.ClassTrainingRetired(level) then return 0, true end
+    local shared = ns.GetTrainingSelections(real)
+    local enabled, selected = force or (goal and (shared or goal.includeClassTraining)), {}
     local function addSelections(g)
         for _, e in ipairs(g.expenses or {}) do
             if e.source == "class" then
@@ -216,7 +277,7 @@ function ns.TrainingRunway(goal, force, goals, levelOverride)
     end
     if goal then addSelections(goal) end
     for _, g in ipairs(goals or (not goal and ns.GetGoals()) or {}) do
-        if g.active and g.includeClassTraining then enabled = true; addSelections(g) end
+        if g.active and (shared or g.includeClassTraining) then enabled = true; addSelections(g) end
     end
     if not enabled then return 0, true end
     local amount, complete, nextLevel = 0, true, nil
@@ -224,7 +285,7 @@ function ns.TrainingRunway(goal, force, goals, levelOverride)
     for _, entry in ipairs(ns.ClassCatalog()) do
         local pastDue = entry.priceSource == "trainer quote" and entry.level < level
         if not entry.paid and entry.eligible and (entry.level >= level or pastDue) and entry.level <= math.min(60,level+2)
-            and (selected[entry.key] ~= false) then
+            and classSelected(entry, selected[entry.key], real) then
             local upcoming = entry.level > level
             if upcoming then
                 nextLevel = math.min(nextLevel or entry.level, entry.level)
@@ -252,7 +313,8 @@ function ns.TrainingRunway(goal, force, goals, levelOverride)
     return amount, complete, nextLevel, costs
 end
 
-function ns.SyncExpenses(goal)
+function ns.SyncExpenses(goal, real)
+    if ns.GetTrainingSelections(real) then goal.includeClassTraining = true end
     if goal.planMode ~= "items" and not goal.includeClassTraining then return end
     local source = goal.presetID == "class-training" and "class"
         or goal.presetID == "profession-training" and "profession" or goal.presetID
@@ -296,6 +358,7 @@ function ns.SyncExpenses(goal)
             end
             for field, value in pairs(quote) do expense[field] = value end
             expense.copper = quote.copper
+            if expense.source == "class" then expense.selected = classSelected(expense, expense.selected, real) end
         end
     end
     -- Separate the entered combined budget when a riding price becomes known.
@@ -377,7 +440,7 @@ function ns.CaptureTrainerPrices()
             end
         end
     end
-    for _, goal in ipairs(ns.db.goals) do ns.SyncExpenses(goal) end
+    for _, goal in ipairs(ns.db.goals) do ns.SyncExpenses(goal, true) end
     if ns.testGoals then for _, goal in ipairs(ns.testGoals) do ns.SyncExpenses(goal) end end
     ns.Changed()
     if ns.CatalogChanged then ns.CatalogChanged() end

@@ -73,7 +73,7 @@ local function showPending()
         row.bar:SetValue(0)
         row:Show()
     end
-    frame.footer:SetText(summary.remainingCount > 0 and ("+ " .. summary.remainingCount .. " more goals - /ge shows all") or "")
+    frame.footer:SetText(summary.remainingCount > 0 and ("+ " .. summary.remainingCount .. " more goals - /mf shows all") or "")
     frame.footer:ClearAllPoints(); frame.footer:SetPoint("BOTTOMLEFT", 16, 10)
     frame:SetAlpha(0); frame:Show()
 end
@@ -123,7 +123,7 @@ end
 
 local function createToast()
     if ns.levelUpToast then return ns.levelUpToast end
-    local frame = CreateFrame("Frame", "GoldEnvelopeLevelUpToast", UIParent, "BackdropTemplate")
+    local frame = CreateFrame("Frame", "MountfundLevelUpToast", UIParent, "BackdropTemplate")
     ns.levelUpToast = frame
     frame:SetSize(330, 130)
     ns.ApplyToastPosition()
@@ -174,7 +174,7 @@ local function createToast()
         self.startedAt,self.expiresAt=nil,nil
         if ns.toastMoving then ns.FinishToastMove() end
     end)
-    tinsert(UISpecialFrames,"GoldEnvelopeLevelUpToast")
+    tinsert(UISpecialFrames,"MountfundLevelUpToast")
     frame:SetAlpha(0); frame:Hide()
     return frame
 end

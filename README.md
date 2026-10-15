@@ -1,29 +1,41 @@
-# Gold Envelope for WoW: Forever
+# Mountfund — Gold Goal Tracker for WoW: Forever
 
 Save toward goals by level, calendar date, or play time, track actual savings against your plan, and
-confirm before supported purchases use protected money. Open with `/envelope`
-or `/ge`; `/ge status` prints your wallet and goal progress.
+confirm before supported purchases use protected money. Open with `/mountfund`
+or `/mf`; `/mf status` prints your wallet and goal progress.
 
 See the [changelog](CHANGELOG.md) for release notes.
 
 ## Install
 
-[Download Gold Envelope Here](https://github.com/Vellum670/WoW-Forever-Addon/raw/refs/heads/main/downloads/GoldEnvelope.zip) — Direct Download Link
+[Download Mountfund Here](https://github.com/Vellum670/WoW-Forever-Addon/raw/refs/heads/main/downloads/Mountfund.zip) — Direct Download Link
 
 
-If the download does not start, [open the ZIP on GitHub](https://github.com/Vellum670/WoW-Forever-Addon/blob/main/downloads/GoldEnvelope.zip)
+If the download does not start, [open the ZIP on GitHub](https://github.com/Vellum670/WoW-Forever-Addon/blob/main/downloads/Mountfund.zip)
 and click **Download raw file**.
 
 Extract it into the Forever client's `Interface/AddOns/` folder.
-The path should end in `AddOns/GoldEnvelope/GoldEnvelope.toc`. Restart
-the client after first installation, enable the addon, and enter `/envelope`.
+The path should end in `AddOns/Mountfund/Mountfund.toc`. Restart
+the client after first installation, enable the addon, and enter `/mountfund`.
+
+### Upgrading from Gold Envelope
+
+To keep existing goals, exit WoW completely and back up your character's
+SavedVariables folder under `WTF/Account/<account>/<realm>/<character>/SavedVariables/`.
+Copy `GoldEnvelope.lua` there to `Mountfund.lua`. If `Mountfund.lua` already exists,
+back it up before replacing it. Mountfund imports the old saved data on first
+login; no file-content edits are needed.
+
+Remove the old `Interface/AddOns/GoldEnvelope/` folder and install
+`Interface/AddOns/Mountfund/` from the new ZIP. This prevents both addons running
+at once. `/ge` and `/envelope` remain supported command aliases.
 
 ## Savings goals
 
 The main page starts with **All goals**, an overview with **Saved** and **Target**
 columns. Goals are grouped by level, calendar date, and play time. Each group
 shows its combined savings added this interval against its scheduled addition,
-using the same values as `/ge status`. Shared class training appears once with
+using the same values as `/mf status`. Shared class training appears once with
 its funded amount and upcoming cost. Its level label follows included upgrades
 after your current level through the next two levels; current and overdue costs
 appear separately as **Training due now**. Hover upcoming Class Training to see
@@ -106,7 +118,7 @@ compared against the checkpoint for the level you have already reached.
 ## Actual savings and progress
 
 **Saved** is real money allocated from your wallet. The expected target is shown
-separately, with how far ahead or behind you are. `/ge status` reports your exact
+separately, with how far ahead or behind you are. `/mf status` reports your exact
 wallet, each goal's saved amount and progress, and any shared training budget.
 Total protected money never exceeds your wallet.
 
@@ -127,7 +139,7 @@ Income received while logged out is not retrospectively assigned to goals.
 
 ## Chat goal summaries
 
-`/ge status` groups all tracked goals by level, calendar date, and play time.
+`/mf status` groups all tracked goals by level, calendar date, and play time.
 Each goal shows its actual savings against its final amount. **Goal for this
 level**, **Goal for Today**, and **Goal for this hour** show net savings added
 in that interval against the combined scheduled addition for that group.
@@ -164,7 +176,7 @@ current progress. It requires an active goal. Zoning, entering instances, and
 
 The toast is silent, lets mouse clicks pass through, and waits until combat
 ends. Rapid level gains share one notification with the latest level. It does
-not add money to your goals. Use `/ge toasts` or **Settings → Show goal progress
+not add money to your goals. Use `/mf toasts` or **Settings → Show goal progress
 notifications** to toggle both login and level-up notifications.
 
 Open **Settings** from the main page and press **Move toast** to drag a preview.
@@ -174,12 +186,13 @@ menu. The position is saved for this character and adapts to screen resolution;
 
 ## Expenses and Class Training
 
-New goals include eligible, unlearned **class training** by default. Training
-estimates for levels 1–60 are available before visiting a trainer. Existing goals
-retain their saved choices.
+Eligible, unlearned **class training** is shared across all goals. Training
+estimates for levels 1–60 are available before visiting a trainer. Ability
+choices are saved once for this character; existing exclusions on any goal
+are retained when upgrading to shared choices.
 
 Use the **Class training** button in the goal editor to open its ability page.
-The goal appears first. The grid shows one clickable icon per ability;
+The page is labeled **Shared across all goals**. The grid shows one clickable icon per ability;
 clicking it includes or excludes every rank, including future ranks beyond the
 goal's deadline. Icons adapt to your current class and level, ordered by the next
 unlearned upgrade after your current level. Small labels show that upgrade's
@@ -191,7 +204,8 @@ explains when they are missing. Observed unpaid older ranks remain in the budget
 without replacing the next-upgrade label. Hover an icon
 for the full spell tooltip, costs, and selection status.
 
-Each toggle saves immediately. **Back** returns to the goal; **Close** or Escape
+Each toggle saves immediately for every goal and updates the main-page preview
+and training budget. **Back** returns to the main page; **Close** or Escape
 closes the window. Training prices remain assigned to their actual required levels
 in level plans. **Additional Expenses** asks before opening itemized planning;
 class training has its own button and page in the same window.
@@ -199,9 +213,16 @@ class training has its own button and page in the same window.
 Class training remains a **shared expense budget**, separate from your mount
 or other goal's final amount. It protects current training plus the next two
 levels, while the Plan table shows future costs at their required levels. Two
-goals including the same training do not count its cost twice. If either active
-goal selects a rank, the shared budget includes it. Intended trainer purchases
+goals do not count the same training twice. A greyed-out ability excludes all
+its ranks from every goal and from preview totals. Intended trainer purchases
 may use this training money; spending goal savings still requires confirmation.
+
+After **more than three hours played at level 60**, the Class training button
+is hidden and class-training budgeting stops. The timer counts time at level 60,
+not total character play time, and persists across sessions. Offline and loading
+time do not advance the local timer. Existing level-60 characters can initialize
+it from the server's played-time data. Your goals, actual gold, and saved training
+choices remain intact.
 
 Bundled prices are **base estimates**, not guaranteed current server quotes.
 Visiting a trainer replaces matching estimates with your observed prices and

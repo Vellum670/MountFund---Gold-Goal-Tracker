@@ -12,7 +12,19 @@ function ns.GetPlayedSeconds()
     return (ns.db and ns.db.playedSeconds or 0)+(ns.playStartedAt and math.max(0,GetTime()-ns.playStartedAt) or 0)
 end
 
+function ns.GetLevel60PlayedSeconds()
+    return (ns.db and ns.db.level60PlayedSeconds or 0)
+        + (ns.level60StartedAt and math.max(0, GetTime() - ns.level60StartedAt) or 0)
+end
+
+function ns.ClassTrainingRetired(level)
+    level = level or ns.GetPlayerLevel()
+    return level >= 60 and UnitLevel("player") >= 60 and ns.GetLevel60PlayedSeconds() > 10800
+end
+
 function ns.FlushPlayClock()
+    if ns.db and ns.level60StartedAt then ns.db.level60PlayedSeconds = ns.GetLevel60PlayedSeconds() end
+    ns.level60StartedAt = nil
     if ns.db and ns.playStartedAt then ns.db.playedSeconds=ns.GetPlayedSeconds() end
     ns.playStartedAt=nil
 end
@@ -51,7 +63,7 @@ function ns.WarningCooldownRemaining()
 end
 
 function ns.Print(text)
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffd36eGold Envelope:|r " .. text)
+    DEFAULT_CHAT_FRAME:AddMessage("|cffffd36eMountfund:|r " .. text)
 end
 
 function ns.GetBudget()
@@ -116,7 +128,7 @@ function ns.BuildGoalStatus(real, levelOverride)
     for index, goal in ipairs(source) do goals[index] = ns.Model.CopyGoal(goal) end
     ns.SyncStatusIntervals(goals, level)
     ns.Model.Reconcile(goals, balance)
-    local training, complete, nextLevel, costs = ns.TrainingRunway(nil, nil, goals, level)
+    local training, complete, nextLevel, costs = ns.TrainingRunway(nil, nil, goals, level, real)
     costs = costs or {current = 0, upcoming = 0, currentComplete = true, upcomingComplete = true}
     local budget = ns.Model.Budget(goals, level, balance, training)
     local sections = {
@@ -160,7 +172,7 @@ function ns.PrintStatus(real, levelOverride)
     if real then ns.SyncStatusIntervals(ns.db.goals, levelOverride or UnitLevel("player")) end
     local status = ns.BuildGoalStatus(real, levelOverride)
     local function line(text) DEFAULT_CHAT_FRAME:AddMessage(text) end
-    line("|cffffd36eGold Envelope • Goal summary|r")
+    line("|cffffd36eMountfund • Goal summary|r")
     line("  " .. (not real and ns.testMoneyCopper ~= nil and "Test wallet: " or "Wallet: ") .. ns.StatusCoins(status.balance))
     local costs = status.trainingCosts
     if costs.current > 0 or not costs.currentComplete then
@@ -375,7 +387,7 @@ function ns.ConfirmPurchase()
 end
 
 local function StartSession()
-    ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals = nil, nil, nil
+    ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals, ns.testTrainingSelections = nil, nil, nil, nil
     if ns.RefreshTestContext then ns.RefreshTestContext() end
     ns.CancelPurchase()
     if ns.HideLevelUpToast then ns.HideLevelUpToast() end
@@ -384,6 +396,10 @@ local function StartSession()
     ns.lastMoney = GetMoney()
     ns.lastLevelUpEvent = UnitLevel("player")
     if not ns.playStartedAt then ns.playStartedAt=GetTime() end
+    if UnitLevel("player") == 60 then
+        ns.level60StartedAt = GetTime()
+        if ns.db.level60PlayedSeconds == nil and RequestTimePlayed then RequestTimePlayed() end
+    end
     for _, goal in ipairs(ns.db.goals) do
         if not goal.startLevel then
             if goal.curve == 2 then goal.curve = 0 end
@@ -391,7 +407,7 @@ local function StartSession()
             for level in pairs(goal.milestones) do if level <= goal.startLevel then goal.milestones[level] = nil end end
             if goal.presetID == "class-training" then goal.includeClassTraining = true end
             ns.PrepareGoal(goal, goal)
-        else ns.SyncExpenses(goal) end
+        else ns.SyncExpenses(goal, true) end
     end
     ns.Model.Reconcile(ns.db.goals, GetMoney())
     ns.db.version = 2
@@ -400,13 +416,20 @@ local function StartSession()
 end
 
 local function Initialize()
-    ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals = nil, nil, nil
+    ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals, ns.testTrainingSelections = nil, nil, nil, nil
     ns.loginToastHandled = nil
     ns.statusLoginHandled=nil
+    ns.level60StartedAt = nil
     ns.CancelPurchase()
     if ns.HideLevelUpToast then ns.HideLevelUpToast() end
-    GoldEnvelopeDB = type(GoldEnvelopeDB) == "table" and GoldEnvelopeDB or {}
-    ns.db = GoldEnvelopeDB
+    -- WoW reads saved data by addon folder name. A copied legacy saved-data
+    -- file can be imported once without changing its contents or losing goals.
+    if type(MountfundDB) ~= "table" and type(GoldEnvelopeDB) == "table" then
+        MountfundDB = GoldEnvelopeDB
+    end
+    GoldEnvelopeDB = nil
+    MountfundDB = type(MountfundDB) == "table" and MountfundDB or {}
+    ns.db = MountfundDB
     if type(ns.db.playedSeconds)~="number" or ns.db.playedSeconds~=ns.db.playedSeconds or ns.db.playedSeconds<0 or ns.db.playedSeconds==math.huge then ns.db.playedSeconds=0 end
     if ns.db.warnings == nil then ns.db.warnings = true end
     if ns.db.levelUpToasts == nil then ns.db.levelUpToasts = true end
@@ -430,6 +453,17 @@ local function Initialize()
     end
     ns.db.trainerCatalog = quotes
     ns.db.earnings = type(ns.db.earnings) == "table" and ns.db.earnings or {}
+    local at60 = ns.db.level60PlayedSeconds
+    if type(at60) ~= "number" or at60 ~= at60 or at60 < 0 or at60 > ns.Model.MAX_COPPER then
+        ns.db.level60PlayedSeconds = nil
+    end
+    if type(ns.db.classTrainingSelections) ~= "table" then
+        ns.db.classTrainingSelections = ns.InitializeTrainingSelections(nil, true)
+    else
+        for key, value in pairs(ns.db.classTrainingSelections) do
+            if type(key) ~= "string" or type(value) ~= "boolean" then ns.db.classTrainingSelections[key] = nil end
+        end
+    end
     resetStatusClock()
     if ns.RefreshTestContext then ns.RefreshTestContext() end
 end
@@ -438,7 +472,7 @@ local frame = CreateFrame("Frame")
 for _, event in ipairs({ "ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_LOGOUT", "PLAYER_ENTERING_WORLD", "PLAYER_LEAVING_WORLD",
     "DISPLAY_SIZE_CHANGED", "UI_SCALE_CHANGED", "PLAYER_MONEY", "PLAYER_LEVEL_UP",
     "MERCHANT_SHOW", "MERCHANT_CLOSED", "TRAINER_SHOW", "TRAINER_CLOSED",
-    "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "PLAYER_REGEN_ENABLED",
+    "AUCTION_HOUSE_SHOW", "AUCTION_HOUSE_CLOSED", "PLAYER_REGEN_ENABLED", "TIME_PLAYED_MSG",
     "TRAINER_UPDATE", "TRAINER_SERVICE_INFO_NAME_UPDATE" }) do
     frame:RegisterEvent(event)
 end
@@ -446,8 +480,14 @@ frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
     if event == "ADDON_LOADED" and arg == addonName then Initialize() end
     if not ns.db then return end
     if event == "PLAYER_LOGIN" then StartSession() end
+    if event == "TIME_PLAYED_MSG" and UnitLevel("player") == 60 and ns.Model.IsInteger(isReloadingUi, 0, ns.Model.MAX_COPPER) then
+        ns.db.level60PlayedSeconds = isReloadingUi
+        ns.level60StartedAt = not ns.outOfWorld and GetTime() or nil
+        ns.Changed()
+    end
     if event=="PLAYER_ENTERING_WORLD" then
         ns.outOfWorld=false; if not ns.playStartedAt then ns.playStartedAt=GetTime() end
+        if UnitLevel("player") == 60 and not ns.level60StartedAt then ns.level60StartedAt = GetTime() end
         if not ns.statusLoginHandled and (arg==true or isReloadingUi==true) then
             ns.statusLoginHandled=true
             C_Timer.After(0,function() resetStatusClock(); ns.PrintStatus(true) end)
@@ -468,7 +508,7 @@ frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
         if ns.FinishToastMove then ns.FinishToastMove() end
         ns.FlushPlayClock()
         ns.outOfWorld=true
-        ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals = nil, nil, nil
+        ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals, ns.testTrainingSelections = nil, nil, nil, nil
         if ns.RefreshTestContext then ns.RefreshTestContext() end
         ns.CancelPurchase()
         if ns.HideLevelUpToast then ns.HideLevelUpToast() end
@@ -488,6 +528,7 @@ frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
         if level and level == math.floor(level) and level >= 1 and level <= ns.Model.MAX_LEVEL
             and level > (ns.lastLevelUpEvent or 0) then
             ns.lastLevelUpEvent = level
+            if level == 60 then ns.db.level60PlayedSeconds = 0; ns.level60StartedAt = GetTime() end
             C_Timer.After(0, function()
                 ns.SyncStatusIntervals(ns.db.goals,level)
                 if ns.RefreshUI then ns.RefreshUI() end
@@ -510,14 +551,19 @@ frame:SetScript("OnUpdate",function(_,elapsed)
     if refreshElapsed>=10 then
         refreshElapsed=0
         ns.FlushPlayClock()
-        if not ns.outOfWorld then ns.playStartedAt=GetTime() end
+        if not ns.outOfWorld then
+            ns.playStartedAt=GetTime()
+            if UnitLevel("player") == 60 then ns.level60StartedAt = GetTime() end
+        end
         ns.Changed()
         ns.CheckStatusMilestones()
     end
 end)
 
-SLASH_GOLDENVELOPE1 = "/envelope"
-SLASH_GOLDENVELOPE2 = "/ge"
+SLASH_MOUNTFUND1 = "/mountfund"
+SLASH_MOUNTFUND2 = "/mf"
+SLASH_MOUNTFUND3 = "/envelope"
+SLASH_MOUNTFUND4 = "/ge"
 
 local function RefreshTestPreview(showToast, refreshGoalContext)
     ns.CancelPurchase()
@@ -532,7 +578,7 @@ local function TestGoldUsage()
     ns.Print("Usage: /ge testgold gold [silver [copper]] <password>, /ge testgold reset <password>, or /ge testgold <password>.")
 end
 
-SlashCmdList.GOLDENVELOPE = function(message)
+SlashCmdList.MOUNTFUND = function(message)
     if not ns.db then return end
     local command, argument = message:match("^%s*(%S+)%s*(.-)%s*$")
     if command == "testlevel" or command == "testgold" or command == "testtoast" then
@@ -551,6 +597,7 @@ SlashCmdList.GOLDENVELOPE = function(message)
             ns.Print("Usage: /ge testlevel 1-60 <password> or /ge testlevel reset <password>. Clears on reload, logout, or character change.")
         elseif argument == "reset" then
             ns.testPlayerLevel = nil
+            ns.testTrainingSelections = nil
             RefreshTestPreview(false)
             ns.Print("Test level reset; using actual level " .. UnitLevel("player") .. ".")
         else
@@ -571,7 +618,7 @@ SlashCmdList.GOLDENVELOPE = function(message)
                 or ("Test gold inactive; actual wallet: " .. ns.Model.FormatCoins(GetMoney()) .. "."))
             TestGoldUsage()
         elseif argument == "reset" then
-            ns.testMoneyCopper, ns.testGoals = nil, nil
+            ns.testMoneyCopper, ns.testGoals, ns.testTrainingSelections = nil, nil, nil
             RefreshTestPreview(false, true)
             ns.Print("Test gold reset; using actual wallet " .. ns.Model.FormatCoins(GetMoney()) .. ".")
         else

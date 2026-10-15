@@ -1,9 +1,9 @@
 ## Interface: 16001
-## Title: Gold Envelope
+## Title: Mountfund - Gold Goal Tracker
 ## Notes: Savings goals by level, date, or play time, with protected spending confirmations.
 ## Author: WoW-Forever-Addon
-## Version: 1.1.2
-## SavedVariablesPerCharacter: GoldEnvelopeDB
+## Version: 1.2.0
+## SavedVariablesPerCharacter: MountfundDB, GoldEnvelopeDB
 
 Data/IncomeWeights.lua
 Data/ClassTraining.lua

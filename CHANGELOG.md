@@ -6,6 +6,25 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 No changes queued yet.
 
+## 1.2.0 - 2026-10-15
+
+- Rebrand to Mountfund - Gold Goal Tracker in the addon list, main window,
+  chat summaries, reporting page, player guide, and download.
+- Add /mountfund and /mf commands while retaining /envelope and /ge aliases.
+- Rename the installed folder, manifest, saved-data namespace, and internal
+  identifiers to Mountfund. Provide a one-time import for copied legacy saved
+  data, with upgrade instructions for retaining existing goals.
+
+## 1.1.3 - 2026-10-15
+
+- Share class-training ability choices across all goals. Greyed-out abilities
+  now update every goal's training budget and the main-page preview together.
+- Preserve existing exclusions when migrating choices and apply them to new
+  goals and newly observed ranks. Keep testing choices session-only.
+- Hide Class training and stop class-training budgeting after more than three
+  hours played at level 60. Persist the timer and seed existing capped
+  characters from server played-time data when available.
+
 ## 1.1.2 - 2026-10-15
 
 - Show upcoming included spells and abilities with their ranks and costs when

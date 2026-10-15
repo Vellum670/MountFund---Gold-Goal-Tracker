@@ -113,9 +113,9 @@ function ns.RefreshExpensePlanner()
     local page=ns.planningFrame
     if not page or not page.goal or not ns.ui or ns.ui.currentPage~=page.key then return end
     ns.SyncExpenses(page.goal)
-    page.goalName:SetText("Goal: " .. (page.goal.name~="" and page.goal.name or "New goal"))
+    page.goalName:SetText(page.classMode and "Shared across all goals" or "Goal: " .. (page.goal.name~="" and page.goal.name or "New goal"))
     local training,complete=ns.TrainingRunway(page.goal)
-    page.summary:SetText("Goal target " .. ns.MoneyText(page.goal.targetCopper) .. "\nNext two levels' training " .. ns.MoneyText(training)
+    page.summary:SetText((page.classMode and "Shared training budget " or "Goal target ") .. ns.MoneyText(page.classMode and training or page.goal.targetCopper) .. "\nCurrent and next two levels' training " .. ns.MoneyText(training)
         .. (not complete and " - some prices unknown" or ""))
     local className=UnitClass("player")
     page.hint:SetText(page.classMode and ((className or "Class") .. " - level " .. ns.GetPlayerLevel() .. " - next upgrades") or "Click to include/exclude. x deletes manual expenses.")
@@ -133,6 +133,7 @@ function ns.RefreshExpensePlanner()
             button.level=UI.Label(button,"",-2,-39,40,"GameFontDisableSmall"); button.level:SetJustifyH("CENTER")
             button:SetScript("OnClick",function(self)
                 local selected=not self.included
+                if page.classMode then ns.SetTrainingAbility(self.expense, selected, page.goal) end
                 for _,item in ipairs(self.expenses) do item.selected=selected end
                 changed(page); ns.RefreshExpensePlanner(); showTooltip(self)
             end)
@@ -237,7 +238,23 @@ function ns.OpenExpensePlanner(goal,onChange,classOnly)
     page.scroll:SetVerticalScroll(0)
     ns.ShowPage(key,ns.ui.currentPage=="planning"); ns.RefreshExpensePlanner()
 end
-function ns.OpenTrainingPlanner(goal,onChange) ns.OpenExpensePlanner(goal,onChange,true) end
+function ns.OpenTrainingPlanner(goal,onChange)
+    if ns.ClassTrainingRetired() then return end
+    if not ns.GetTrainingSelections() then
+        local choices = ns.InitializeTrainingSelections(goal)
+        if ns.testMoneyCopper ~= nil or ns.testPlayerLevel ~= nil then ns.testTrainingSelections = choices
+        else ns.db.classTrainingSelections = choices end
+        if not ns.testPlayerLevel or ns.testGoals then
+            for _, existing in ipairs(ns.GetGoals()) do ns.SyncExpenses(existing) end
+        end
+    end
+    if not goal then
+        goal = {name="Class training", targetLevel=60, targetCopper=0, includeClassTraining=true,
+            curve=0, active=true, milestones={}, expenses={}}
+        ns.SyncExpenses(goal)
+    end
+    ns.OpenExpensePlanner(goal,onChange,true)
+end
 function ns.UpdateOpenPlannerGoal(goal)
     local page=ns.planningFrame
     if not page or not page.goal or not ns.ui or ns.ui.currentPage~=page.key then return end

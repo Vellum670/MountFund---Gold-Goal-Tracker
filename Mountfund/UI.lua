@@ -412,8 +412,8 @@ local function planCurrentGoal()
     if goal.planMode=="items" then open() else ns.AskGoalPlanning(goal,open,saveCurrentGoal) end
 end
 local function planClassTraining()
-    local goal,err=readEditor(true); if not goal then ns.ui.error:SetText(err); return end
-    ns.OpenTrainingPlanner(goal,applyPlannerChoices)
+    ns.SaveAllFields(true)
+    ns.OpenTrainingPlanner()
 end
 function ns.CatalogChanged()
     if draft then ns.SyncExpenses(draft); if draft.planMode=="items" then setCoins(ns.ui.amount,draft.targetCopper) end end
@@ -632,6 +632,8 @@ function ns.RefreshUI()
     local ui=ns.ui
     local status = ns.BuildGoalStatus()
     local budget = status.budget
+    ui.training:SetShown(not ns.ClassTrainingRetired())
+    if ns.ClassTrainingRetired() and ui.currentPage == "training" then ns.ClosePlanningWindows() end
     refreshGoalOverview(status)
     refreshGoldTips()
     local summary=(ns.testMoneyCopper~=nil and "Test wallet " or "Wallet ") .. ns.MoneyText(budget.balance)
@@ -716,7 +718,7 @@ function ns.OpenBugReport()
     local page = ns.ui.pages.bugreport
     if not page then
         page = makePage("bugreport", "Report a bug", 250)
-        local intro = label(page, "Copy this link into your browser to report a Gold Envelope bug on GitHub.",
+        local intro = label(page, "Copy this link into your browser to report a Mountfund bug on GitHub.",
             0, 0, 368, "GameFontHighlightSmall")
         intro:SetHeight(40)
         intro:SetWordWrap(true)
@@ -765,14 +767,14 @@ local function settingsPage()
     ns.RefreshUI(); ns.ShowPage("settings")
 end
 createUI=function()
-    local ui=window("GoldEnvelopeWindow",400,560,"Gold Envelope"); ns.ui=ui
+    local ui=window("MountfundWindow",400,560,"Mountfund"); ns.ui=ui
     ui.pages,ui.history={},{}
     ui.error=label(ui,"",16,0,368,"GameFontHighlightSmall"); ui.error:ClearAllPoints(); ui.error:SetPoint("BOTTOMLEFT",16,12); ui.error:SetTextColor(1,0.65,0.35)
     button(ui,"Close",326,-14,60,ns.CloseUI)
     ui.reportBug = button(ui, "Report bug", 226, -14, 92, ns.OpenBugReport)
     tooltip(ui.reportBug, "Report a bug", "Copy the GitHub issue link to report a problem in your browser.")
     ui.back=button(ui,"Back",16,-14,70,ns.GoBack); ui.back:Hide()
-    local main=makePage("main","Gold Envelope",560); main:SetHeight(482); main:Show(); ui.currentPage="main"
+    local main=makePage("main","Mountfund",560); main:SetHeight(482); main:Show(); ui.currentPage="main"
     ui.summary=label(main,"",0,0,368,"GameFontHighlightSmall")
     createGoalOverview(main)
     ui.mainNav={
@@ -880,7 +882,7 @@ end
 
 function ns.ShowWarning(pending)
     if not ns.warningFrame then
-        local frame=window("GoldEnvelopeSavingsWarning",400,300,"Spend protected money?"); ns.warningFrame=frame
+        local frame=window("MountfundSavingsWarning",400,300,"Spend protected money?"); ns.warningFrame=frame
         frame:SetFrameLevel(3000)
         -- The tooltip backdrop texture is translucent even with an opaque tint.
         -- Give this confirmation its own solid surface so world labels do not show through.
