@@ -58,6 +58,21 @@ function ns.SetGoals(goals)
     if ns.testGoals then ns.testGoals = goals else ns.db.goals = goals end
 end
 
+function ns.GetWarningSilenceSeconds()
+    local seconds = ns.db and ns.db.warningSilenceSeconds
+    if ns.Model.IsInteger(seconds, 30, 3600) then return seconds end
+    return ns.WARNING_COOLDOWN_SECONDS
+end
+
+function ns.WarningSilenceText()
+    local seconds = ns.GetWarningSilenceSeconds()
+    if seconds % 60 == 0 then
+        local minutes = seconds / 60
+        return string.format("%d %s", minutes, minutes == 1 and "minute" or "minutes")
+    end
+    return string.format("%d seconds", seconds)
+end
+
 function ns.WarningCooldownRemaining()
     return math.max(0, ns.warningCooldownUntil - GetTime())
 end
@@ -95,14 +110,20 @@ function ns.StatusInterval(goal, level)
         local parts=date("*t",now)
         local first=time({year=parts.year,month=parts.month,day=parts.day,hour=0,min=0,sec=0})
         local last=time({year=parts.year,month=parts.month,day=parts.day+1,hour=0,min=0,sec=0})
+        if now>=goal.deadlineTime then
+            return "date:"..date("%Y-%m-%d",now),math.max(0,goal.targetCopper-ns.Model.IntervalSaved(goal,level,now,played))
+        end
         return "date:"..date("%Y-%m-%d",now),
-            math.max(0,ns.Model.TargetAtLevel(goal,level,last,played)-ns.Model.TargetAtLevel(goal,level,first,played))
+            math.max(0,ns.Model.AdaptiveTarget(goal,level,last,played,level)-ns.Model.AdaptiveTarget(goal,level,first,played,level))
     elseif kind=="played" then
         local start=goal.startPlayed or 0
         local hour=math.floor(math.max(0,played-start)/3600)
         local first=start+hour*3600
+        if played>=start+goal.durationSeconds then
+            return "played:"..start..":"..hour,math.max(0,goal.targetCopper-ns.Model.IntervalSaved(goal,level,now,played))
+        end
         return "played:"..start..":"..hour,
-            math.max(0,ns.Model.TargetAtLevel(goal,level,now,first+3600)-ns.Model.TargetAtLevel(goal,level,now,first))
+            math.max(0,ns.Model.AdaptiveTarget(goal,level,now,first+3600,level)-ns.Model.AdaptiveTarget(goal,level,now,first,level))
     end
     return "level:"..level,ns.Model.LevelPlanStep(goal,level).addition
 end
@@ -145,7 +166,7 @@ function ns.BuildGoalStatus(real, levelOverride)
     for index, goal in ipairs(goals) do
         local progress = ns.Model.GoalProgress(goal, level)
         local row = {index = index, name = goal.name, saved = progress.saved, target = progress.target,
-            active = goal.active, ahead = progress.ahead, behind = progress.behind,
+            active = goal.active, completedAt=goal.completedAt, ahead = progress.ahead, behind = progress.behind,
             goalType = goal.goalType or "level", targetLevel = goal.targetLevel,
             deadlineTime = goal.deadlineTime, durationSeconds = goal.durationSeconds}
         if goal.active then
@@ -221,7 +242,8 @@ function ns.CheckStatusMilestones()
         end
     end
     ns.statusDay,ns.statusPlayed=today,played
-    if due then ns.PrintStatus(true) end
+    ns.SyncStatusIntervals(ns.db.goals,UnitLevel("player"))
+    if due and ns.db.milestoneChatSummaries ~= false then ns.PrintStatus(true) end
 end
 
 -- Copy just the display values so an open toast never changes its goal data.
@@ -235,7 +257,7 @@ function ns.BuildLevelUpSummary(level)
     ns.Model.Reconcile(goals, balance)
     local ordered = {}
     for index, goal in ipairs(goals) do
-        if goal.active then ordered[#ordered + 1] = { goal = goal, index = index } end
+        if goal.active and not (ns.db.trainingProtection==false and goal.targetCopper==0 and goal.includeClassTraining) then ordered[#ordered + 1] = { goal = goal, index = index } end
     end
     if #ordered == 0 then return nil end
     local timed=false
@@ -324,6 +346,7 @@ end
 
 function ns.Changed()
     if ns.RefreshUI then ns.RefreshUI() end
+    if ns.CheckGoalCompletion then ns.CheckGoalCompletion() end
 end
 
 function ns.CancelPurchase()
@@ -350,9 +373,9 @@ function ns.RequestPurchase(read, execute)
     end
     local level = UnitLevel("player")
     local budget = ns.Model.Purchase(ns.db.goals, level, GetMoney(), action.cost,
-        ns.TrainingRunway(nil, nil, ns.db.goals, level), action.classTraining)
+        ns.TrainingRunway(nil, nil, ns.db.goals, level), action.classTraining and not action.excludedTraining)
     if not budget.affordable then ns.Print("You do not have enough money for this purchase."); return end
-    if ns.db.warnings and budget.warning and ns.WarningCooldownRemaining() == 0 then
+    if ns.db.warnings and action.excludedTraining and ns.WarningCooldownRemaining() == 0 then
         ns.pending = { read = read, execute = execute, action = action, budget = budget }
         ns.ShowWarning(ns.pending)
         return
@@ -371,18 +394,19 @@ function ns.ConfirmPurchase()
     end
     local level = UnitLevel("player")
     local budget = ns.Model.Purchase(ns.db.goals, level, GetMoney(), action.cost,
-        ns.TrainingRunway(nil, nil, ns.db.goals, level), action.classTraining)
+        ns.TrainingRunway(nil, nil, ns.db.goals, level), action.classTraining and not action.excludedTraining)
     if not budget.affordable then ns.Print("You no longer have enough money for this purchase."); return end
+    if not ns.db.warnings or not action.excludedTraining then pending.execute(); return end
     -- Display refreshes do not change what the player is approving. Reconfirm
     -- only when the actual wallet or protected spending impact has changed.
-    if budget.warning and (budget.balance ~= pending.budget.balance
-        or budget.reserved ~= pending.budget.reserved or budget.afterShortfall ~= pending.budget.afterShortfall) then
+    if budget.balance ~= pending.budget.balance
+        or budget.reserved ~= pending.budget.reserved or budget.afterShortfall ~= pending.budget.afterShortfall then
         ns.RequestPurchase(pending.read, pending.execute)
         return
     end
     -- A confirmed warning allows follow-up purchases for this session only.
     -- Price, selection and affordability checks still run during the grace period.
-    ns.warningCooldownUntil = GetTime() + ns.WARNING_COOLDOWN_SECONDS
+    ns.warningCooldownUntil = GetTime() + ns.GetWarningSilenceSeconds()
     pending.execute()
 end
 
@@ -431,6 +455,7 @@ local function Initialize()
     MountfundDB = type(MountfundDB) == "table" and MountfundDB or {}
     ns.db = MountfundDB
     if type(ns.db.playedSeconds)~="number" or ns.db.playedSeconds~=ns.db.playedSeconds or ns.db.playedSeconds<0 or ns.db.playedSeconds==math.huge then ns.db.playedSeconds=0 end
+    ns.db.warningSilenceSeconds = ns.GetWarningSilenceSeconds()
     if ns.db.warnings == nil then ns.db.warnings = true end
     if ns.db.levelUpToasts == nil then ns.db.levelUpToasts = true end
     ns.db.goals = type(ns.db.goals) == "table" and ns.db.goals or {}
@@ -490,7 +515,10 @@ frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
         if UnitLevel("player") == 60 and not ns.level60StartedAt then ns.level60StartedAt = GetTime() end
         if not ns.statusLoginHandled and (arg==true or isReloadingUi==true) then
             ns.statusLoginHandled=true
-            C_Timer.After(0,function() resetStatusClock(); ns.PrintStatus(true) end)
+            C_Timer.After(0,function()
+                resetStatusClock()
+                if ns.db.loginChatSummaries ~= false then ns.PrintStatus(true) end
+            end)
         end
         -- The initial-login flag excludes zoning, instances, and UI reloads.
         if not ns.loginToastHandled then
@@ -511,6 +539,7 @@ frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
         ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals, ns.testTrainingSelections = nil, nil, nil, nil
         if ns.RefreshTestContext then ns.RefreshTestContext() end
         ns.CancelPurchase()
+        if ns.completionFrame then ns.completionFrame:Hide() end
         if ns.HideLevelUpToast then ns.HideLevelUpToast() end
         return
     end
@@ -532,7 +561,7 @@ frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
             C_Timer.After(0, function()
                 ns.SyncStatusIntervals(ns.db.goals,level)
                 if ns.RefreshUI then ns.RefreshUI() end
-                if hasStatusGoal("level") then ns.PrintStatus(true,level) end
+                if ns.db.milestoneChatSummaries ~= false and hasStatusGoal("level") then ns.PrintStatus(true,level) end
                 if ns.db.levelUpToasts and ns.QueueLevelUpToast then ns.QueueLevelUpToast(ns.testPlayerLevel or level) end
             end)
         end
@@ -581,7 +610,7 @@ end
 SlashCmdList.MOUNTFUND = function(message)
     if not ns.db then return end
     local command, argument = message:match("^%s*(%S+)%s*(.-)%s*$")
-    if command == "testlevel" or command == "testgold" or command == "testtoast" then
+    if command == "testlevel" or command == "testgold" or command == "testtoast" or command == "testcomplete" then
         local values, password = (argument or ""):match("^(.-)%s*(%S+)$")
         if password ~= ns.TEST_COMMAND_PASSWORD then
             ns.Print("Test commands require the password as their last argument.")
@@ -643,6 +672,8 @@ SlashCmdList.MOUNTFUND = function(message)
             ns.Print("Test gold set to " .. ns.Model.FormatCoins(balance) .. "; actual wallet "
                 .. ns.Model.FormatCoins(GetMoney()) .. ". Test goal progress clears on reload or logout.")
         end
+    elseif command == "testcomplete" then
+        if argument == "" and ns.TestGoalCompletion then ns.TestGoalCompletion() end
     elseif command == "testtoast" then
         if argument ~= "" then
             ns.Print("Usage: /ge testtoast <password>.")

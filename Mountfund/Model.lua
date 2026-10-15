@@ -133,6 +133,8 @@ function Model.ValidateGoal(goal)
     if goal.startLevel and not integer(goal.startLevel, 1, Model.MAX_LEVEL) then return nil, "Invalid start level." end
     if goal.initialCopper and not integer(goal.initialCopper, 0, Model.MAX_COPPER) then return nil, "Invalid initial investment." end
     if goal.savedCopper and not integer(goal.savedCopper, 0, Model.MAX_COPPER) then return nil, "Invalid saved balance." end
+    if goal.completedAt ~= nil and not integer(goal.completedAt,0,Model.MAX_COPPER) then return nil,"Invalid completion date." end
+    if goal.completedCopper ~= nil and not integer(goal.completedCopper,0,Model.MAX_COPPER) then return nil,"Invalid completion amount." end
     if goal.active ~= nil and type(goal.active) ~= "boolean" then return nil, "Invalid tracking setting." end
     if goal.nextExpenseID ~= nil and not integer(goal.nextExpenseID, 0, Model.MAX_COPPER) then
         return nil, "Invalid expense identifier."
@@ -201,7 +203,7 @@ function Model.TargetAtLevel(goal, level, now, played)
     if Model.IsTimeGoal(goal) then
         local initial=math.min(goal.initialCopper or 0,goal.targetCopper)
         local fraction=Model.ScheduleFraction(goal,level,now,played)^(goal.curve==0 and 1 or goal.curve)
-        return math.floor(initial+(goal.targetCopper-initial)*fraction)
+        return math.floor(initial+(goal.targetCopper-initial)*fraction+0.0000001)
     end
     local start = goal.startLevel or 1
     if level < start then return 0 end
@@ -230,13 +232,49 @@ function Model.TargetAtLevel(goal, level, now, played)
     return initial
 end
 
+function Model.IntervalSaved(goal, level, now, played)
+    level=level or ns.GetPlayerLevel(); now=now or ns.Now(); played=played or ns.GetPlayedSeconds()
+    local key="level:" .. level
+    if goal.goalType=="date" then key="date:" .. date("%Y-%m-%d",now)
+    elseif goal.goalType=="played" then
+        local start=goal.startPlayed or 0
+        key="played:" .. start .. ":" .. math.floor(math.max(0,played-start)/3600)
+    end
+    return math.min(goal.targetCopper,(goal.statusIntervalKey==key and goal.statusIntervalBase)
+        or goal.savedCopper or goal.initialCopper or 0)
+end
+
+-- Rebase only the remaining schedule, keeping the original curve for ahead/behind comparisons.
+function Model.AdaptiveTarget(goal, futureLevel, futureTime, futurePlayed, anchorLevel)
+    local level=anchorLevel or ns.GetPlayerLevel()
+    local now,played=ns.Now(),ns.GetPlayedSeconds()
+    local anchorTime,anchorPlayed=now,played
+    if goal.goalType=="date" then
+        local parts=date("*t",now)
+        anchorTime=time({year=parts.year,month=parts.month,day=parts.day,hour=0,min=0,sec=0})
+    elseif goal.goalType=="played" then
+        local start=goal.startPlayed or 0
+        anchorPlayed=start+math.floor(math.max(0,played-start)/3600)*3600
+    end
+    if not Model.IsTimeGoal(goal) and futureLevel<(goal.startLevel or 1) then return Model.TargetAtLevel(goal,futureLevel) end
+    local original=Model.TargetAtLevel(goal,level,anchorTime,anchorPlayed)
+    local future=Model.TargetAtLevel(goal,futureLevel,futureTime,futurePlayed)
+    if future<original then return future end
+    local base=Model.IntervalSaved(goal,level,now,played)
+    if original>=goal.targetCopper then return goal.targetCopper end
+    return math.floor(base+(goal.targetCopper-base)*math.max(0,math.min(1,(future-original)/(goal.targetCopper-original)))+0.0000001)
+end
+
 -- The attained-level target measures progress so far. The next boundary is
 -- the savings target to work toward while playing the current level.
 function Model.LevelPlanStep(goal, level)
     local boundary=level
     if level>=(goal.startLevel or level) and level<goal.targetLevel then boundary=level+1 end
-    local target=Model.TargetAtLevel(goal,boundary)
-    return {target=target,addition=math.max(0,target-Model.TargetAtLevel(goal,level)),
+    local target=Model.AdaptiveTarget(goal,boundary,nil,nil,level)
+    if level>=goal.targetLevel then
+        return {target=goal.targetCopper,addition=math.max(0,goal.targetCopper-Model.IntervalSaved(goal,level))}
+    end
+    return {target=target,addition=math.max(0,target-Model.AdaptiveTarget(goal,level,nil,nil,level)),
         byLevel=boundary>level and boundary or nil}
 end
 
@@ -281,16 +319,6 @@ function Model.FundGoals(goals, amount, balance, trainingDue, level)
     local left = math.min(amount, math.max(0, balance - budget.saved - (trainingDue or 0)))
     local ordered = {}
     for _, goal in ipairs(goals) do if goal.active then ordered[#ordered + 1] = goal end end
-    local originalOrder={}; for index,g in ipairs(ordered) do originalOrder[g]=index end
-    local timed=false
-    for _,g in ipairs(ordered) do if Model.IsTimeGoal(g) then timed=true end end
-    table.sort(ordered, function(a,b)
-        if timed then
-            local pa,pb=Model.Priority(a,level),Model.Priority(b,level)
-            if pa~=pb then return pa<pb end
-        elseif a.targetLevel~=b.targetLevel then return a.targetLevel<b.targetLevel end
-        return originalOrder[a]<originalOrder[b]
-    end)
     for _, goal in ipairs(ordered) do
         local addition = math.min(left, math.max(0, goal.targetCopper - (goal.savedCopper or 0)))
         goal.savedCopper = (goal.savedCopper or 0) + addition

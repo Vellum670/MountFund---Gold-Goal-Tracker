@@ -238,7 +238,7 @@ function ns.ExpensesByLevel(goal)
             copper=expense.copper,key=expense.key}
         if expense.copper~=nil then entry.total=entry.total+expense.copper else entry.complete=false end
     end
-    if (ns.GetTrainingSelections() or goal.includeClassTraining) and not ns.ClassTrainingRetired() then
+    if ns.db.trainingProtection~=false and (ns.GetTrainingSelections() or goal.includeClassTraining) and not ns.ClassTrainingRetired() then
         local classRanks={}
         for _,expense in ipairs(ns.ClassCatalog()) do
             local key=expense.spellID or expense.key; local previous=classRanks[key]
@@ -262,10 +262,19 @@ end
 
 -- An optional roster merges its active training choices with a staged goal.
 -- This keeps an initial allocation from taking another goal's training money.
+function ns.IsExcludedTraining(name)
+    local choices=ns.GetTrainingSelections(true)
+    if not choices then return false end
+    for _,expense in ipairs(ns.ClassCatalog()) do
+        if expense.name==name and choices[ns.TrainingAbilityKey(expense)]==false then return true end
+    end
+    return false
+end
+
 function ns.TrainingRunway(goal, force, goals, levelOverride, real)
     local level = levelOverride or ns.GetPlayerLevel()
     real = real or goals == ns.db.goals
-    if ns.ClassTrainingRetired(level) then return 0, true end
+    if ns.db.trainingProtection==false or ns.ClassTrainingRetired(level) then return 0, true end
     local shared = ns.GetTrainingSelections(real)
     local enabled, selected = force or (goal and (shared or goal.includeClassTraining)), {}
     local function addSelections(g)

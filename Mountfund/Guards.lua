@@ -104,7 +104,7 @@ local function trainerAction()
         classTraining = false
     end
     return { key = "training:" .. index .. ":" .. (name or ""), cost = cost, label = name or "Training",
-        classTraining = classTraining }
+        classTraining = classTraining, excludedTraining = classTraining and ns.IsExcludedTraining(name) }
 end
 
 local function commodityAction(control)

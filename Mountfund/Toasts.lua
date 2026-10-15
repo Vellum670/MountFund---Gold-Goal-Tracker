@@ -190,6 +190,8 @@ function ns.FlushLevelUpToast()
 end
 
 function ns.QueueLevelUpToast(level,reason)
+    -- The funding confirmation already conveys progress at the same anchor.
+    if ns.completionFrame and ns.completionFrame:IsShown() then return end
     if not ns.db.levelUpToasts or not ns.BuildLevelUpSummary(level) then return end
     ns.pendingLevelUpToast = { level = level, reason=reason,
         preview = ns.testPlayerLevel ~= nil or ns.testMoneyCopper ~= nil, readyAt = GetTime() + 0.5 }

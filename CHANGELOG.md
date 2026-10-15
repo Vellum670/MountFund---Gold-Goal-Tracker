@@ -4,7 +4,70 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 ## Unreleased
 
-No changes queued yet.
+## 1.2.9 - 2026-10-15
+
+- Keep missing savings visible for unfinished goals at or past their level,
+  calendar, or play-time deadline instead of reporting a zero interval target.
+- Keep overdue interval targets stable as new savings advance progress.
+
+## 1.2.8 - 2026-10-15
+
+- Restore completion notifications when a goal is funded again after spending,
+  or when its target changes, including spending while a prompt is open.
+- Keep unfinished goal and expense drafts attached to the correct goals when
+  funding priorities are reordered.
+- Keep the completion confirmation on screen at edge notification positions.
+
+## 1.2.7 - 2026-10-15
+
+- Warn before purchasing excluded class spells and abilities even when no
+  protected gold is used, including when training protection is disabled.
+- Rename the warning labels consistently to excluded-ability warnings and
+  explain the excluded ability in the purchase confirmation.
+
+## 1.2.6 - 2026-10-15
+
+- Add a class-training protection setting; disabling it releases the reserve
+  and hides training costs while preserving ability choices.
+- Show protection warnings only when purchasing an excluded, greyed-out class
+  ability would use protected gold. Other purchases no longer show the warning.
+- Explain on the warning popup that Settings can change or disable warnings.
+
+- Simplify README installation steps by removing the extra folder-path check.
+
+## 1.2.5 - 2026-10-15
+
+- Automatically redistribute remaining savings across levels, calendar days, or
+  play-time hours using actual interval progress and the selected savings curve.
+  Keep original ahead/behind comparisons and the final goal target.
+- Collapse completed goals into an expandable history by default.
+- Drag goals on the Goals page to set funding priority; top goals receive new
+  savings first after class-training protection.
+
+## 1.2.4 - 2026-10-15
+
+- Celebrate fully funded goals with a gentle chime and a confirmation prompt.
+  Mark complete records completion and releases savings without spending gold;
+  Later keeps the goal tracked, with a Complete button to return to confirmation.
+- Recheck funding before completion and keep completed goals labeled after
+  spending or reloading. Enable tracking to start saving for the goal again.
+
+## 1.2.3 - 2026-10-15
+
+- Add separate Settings toggles for login/reload and goal-milestone chat summaries;
+  keep manual status available and enable automatic summaries by default.
+- Add a gold-making tips toggle that hides the section and reclaims its space
+  without changing the saved collapse preference.
+
+## 1.2.2 - 2026-10-15
+
+- Configure protected-gold warning silence after Spend anyway from 30 seconds
+  to 60 minutes in Settings; keep the two-minute default and save silently.
+- Use consistent protected-gold warning labels in Settings and purchase warnings.
+
+- Remove private pre-release rename migration instructions from the README.
+
+- List /mf as the command to open Mountfund under Useful controls.
 
 ## 1.2.1 - 2026-10-15
 

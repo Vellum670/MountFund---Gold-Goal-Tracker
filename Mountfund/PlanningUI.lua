@@ -78,8 +78,10 @@ local function showTooltip(button)
     local ability=item.source=="class" or item.source=="profession"
     GameTooltip:AddLine(ability and (button.maxed and "Max - no further rank upgrades" or "Next rank: level " .. button.requiredLevel)
         or "Due at level " .. button.requiredLevel,1,0.82,0)
-    GameTooltip:AddLine((ability and "Cost through level " .. page.goal.targetLevel or "Expense cost") .. ": " .. ns.MoneyText(button.cost)
+    if not ability or ns.db.trainingProtection~=false then
+        GameTooltip:AddLine((ability and "Cost through level " .. page.goal.targetLevel or "Expense cost") .. ": " .. ns.MoneyText(button.cost)
         .. (button.unknown and (ability and " (some prices unknown)" or " (price unknown)") or ""),1,1,1)
+    end
     local noun=ability and "ability" or "expense"
     GameTooltip:AddLine((button.included and "Included - click to exclude " or "Excluded - click to include ") .. noun,1,0.82,0)
     if button.blocked then GameTooltip:AddLine("Some ranks need a quest, talent, or race prerequisite before their costs count.",0.7,0.7,0.7,true) end
@@ -117,6 +119,9 @@ function ns.RefreshExpensePlanner()
     local training,complete=ns.TrainingRunway(page.goal)
     page.summary:SetText((page.classMode and "Shared training budget " or "Goal target ") .. ns.MoneyText(page.classMode and training or page.goal.targetCopper) .. "\nCurrent and next two levels' training " .. ns.MoneyText(training)
         .. (not complete and " - some prices unknown" or ""))
+    if ns.db.trainingProtection==false then
+        page.summary:SetText(page.classMode and "Training protection is off" or ("Goal target " .. ns.MoneyText(page.goal.targetCopper)))
+    end
     local className=UnitClass("player")
     page.hint:SetText(page.classMode and ((className or "Class") .. " - level " .. ns.GetPlayerLevel() .. " - next upgrades") or "Click to include/exclude. x deletes manual expenses.")
     page.expenseButtons=page.expenseButtons or {}; for _,button in ipairs(page.expenseButtons) do button:Hide() end

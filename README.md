@@ -7,34 +7,24 @@ Save for mounts and other goals, budget class training, and track progress by le
 ## Install
 
 1. Extract the ZIP into your Forever client's `Interface/AddOns/` folder.
-2. Check the path: `AddOns/Mountfund/Mountfund.toc`.
-3. Restart WoW, enable Mountfund, and type **`/mf`**.
+2. Restart WoW, enable Mountfund, and type **`/mf`**.
 
 ## Get started
 
 - Choose **New** or **Presets**, set an amount, and click the deadline button to cycle between level, date, and play time.
+- Drag goals on **Goals** to set funding priority. Remaining savings targets automatically adjust to shortfalls or surplus; completed history starts collapsed.
 - **All goals** shows savings and grouped targets. Click a goal to edit it; hover for details.
 - **Class training** protects upcoming costs. Click ability icons to include/exclude them across all goals; grey means excluded. Trainer visits update price estimates.
+- Fully funded goals offer **Mark complete** or **Later**. Completion releases the allocation and keeps the goal; your gold stays in your wallet.
 - Use **Additional Expenses** for other purchases and **Savings plan** for your schedule.
 
 **Edits save automatically. Escape saves and closes.** Savings stay in your wallet; spending can reduce progress. Unchecking **Track this goal** releases its saved allocation.
 
 ## Useful controls
 
+- **`/mf`** — open Mountfund.
 - **`/mf status`** — chat summary; also appears on login, reload, and goal milestones.
-- **Settings** — spending confirmations and toast options. Hover a toast to keep it visible.
+- **Settings** — warnings, automatic chat summaries, tips, and toast options. Hover a toast to keep it visible.
 - **Report bug** beside Close — copy the GitHub link into your browser.
 
-Spending confirmations cover supported vendor, trainer, repair-all, and auction actions. **Spend anyway** silences them for two minutes.
-
-<details>
-<summary><strong>Upgrading from Gold Envelope? Keep your saved goals.</strong></summary>
-
-Exit WoW and back up `WTF/Account/<account>/<realm>/<character>/SavedVariables/`.
-Copy `GoldEnvelope.lua` there to `Mountfund.lua`; back up any existing destination first.
-No file-content edits are needed.
-
-Remove `Interface/AddOns/GoldEnvelope/`, then install the new `Mountfund/` folder.
-Your old data imports on login. `/ge` and `/envelope` still work.
-
-</details>
+Excluded-ability warnings appear before buying a greyed-out class spell or ability, regardless of protected gold. Disable training protection in Settings to release its reserve and hide training costs. **Spend anyway** silences excluded-ability warnings for two minutes by default; change this in Settings (30 seconds–60 minutes).

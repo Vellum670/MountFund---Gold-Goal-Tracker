@@ -171,6 +171,10 @@ function ns.SaveAllFields(onlyPending)
     if ns.ui.currentPage=="settings" then
         ns.db.warnings=ns.ui.warnings:GetChecked() and true or false
         ns.db.levelUpToasts=ns.ui.toastToggle:GetChecked() and true or false
+        if ns.SaveWarningSilence then ns.SaveWarningSilence() end
+        for _,setting in ipairs(ns.ui.summarySettings or {}) do
+            ns.db[setting.key] = setting.control:GetChecked() and true or false
+        end
     end
 end
 function ns.ShowPage(key,replace)
@@ -228,6 +232,7 @@ local function readEditor(skipValidation)
     end
     local amount,err=getCoins(ui.amount); if not amount then return nil,err end
     goal.targetCopper=amount; goal.active=ui.active:GetChecked() and true or false
+    if goal.active then goal.completedAt,goal.completedCopper=nil,nil end
     if not saved then goal.startLevel,goal.savedCopper=nil,nil
     elseif saved.targetCopper==0 and (saved.savedCopper or 0)==0 and amount>0 then goal.savedCopper=nil
     else goal.savedCopper=saved.savedCopper; goal.initialCopper=math.min(goal.initialCopper or 0,amount) end
@@ -251,6 +256,7 @@ local function refreshEditorControls()
         or "Enter the level when you want this goal funded.")
     for _,field in ipairs(ui.amount) do field:SetEnabled(draft.planMode~="items") end
     ui.delete:SetEnabled(ns.GetGoals()[selected]~=nil)
+    if ui.complete then ui.complete:SetEnabled(draft.active and draft.targetCopper>0 and (draft.savedCopper or 0)>=draft.targetCopper) end
 end
 local function renderPlan(goal)
     local ui=ns.ui; if not ui.planRows then return end
@@ -293,13 +299,13 @@ local function renderPlan(goal)
         local target,previous,current
         if timed then
             local fraction=step/10; local initial=math.min(goal.initialCopper or 0,goal.targetCopper)
-            target=math.floor(initial+(goal.targetCopper-initial)*fraction^(goal.curve==0 and 1 or goal.curve))
-            previous=step==0 and target or math.floor(initial+(goal.targetCopper-initial)*((step-1)/10)^(goal.curve==0 and 1 or goal.curve))
+            target=Model.AdaptiveTarget(goal,ns.GetPlayerLevel(),goal.goalType=="date" and (goal.startTime+fraction*(goal.deadlineTime-goal.startTime)) or nil,goal.goalType=="played" and ((goal.startPlayed or 0)+fraction*goal.durationSeconds) or nil)
+            previous=step==0 and target or Model.AdaptiveTarget(goal,ns.GetPlayerLevel(),goal.goalType=="date" and (goal.startTime+(step-1)/10*(goal.deadlineTime-goal.startTime)) or nil,goal.goalType=="played" and ((goal.startPlayed or 0)+(step-1)/10*goal.durationSeconds) or nil)
             row.level:SetText(goal.goalType=="played" and string.format("%.1fh",fraction*goal.durationSeconds/3600)
                 or date("%m/%d",goal.startTime+fraction*(goal.deadlineTime-goal.startTime)))
             current=math.floor(Model.ScheduleFraction(goal,ns.GetPlayerLevel())*10)==step
         else
-            target=Model.TargetAtLevel(goal,step); previous=step==first and target or Model.TargetAtLevel(goal,step-1)
+            target=Model.AdaptiveTarget(goal,step); previous=step==first and target or Model.AdaptiveTarget(goal,step-1)
             row.level:SetText(step); current=step==ns.GetPlayerLevel()
         end
         row.planLevel=not timed and step or nil; row.expenses=expenses[step]
@@ -354,6 +360,7 @@ saveCurrentGoal=function()
     if not draft or ns.ui.updatingEditor then return end
     local goal,err=readEditor()
     if not goal then storeInputDraft(); ns.ui.error:SetText(err); return false end
+    if ns.TransferCompletionNotice then ns.TransferCompletionNotice(ns.GetGoals()[selected],goal) end
     ns.GetGoals()[selected]=goal; Model.Reconcile(ns.GetGoals(),ns.GetPlayerMoney())
     draft=copyGoal(goal)
     ns.ui.savedEditorInputs=editorInputs()
@@ -566,12 +573,20 @@ local function refreshGoalOverview(status)
             y = y + 6
         end
     end
-    if #status.untracked > 0 then
-        render("heading", "NOT TRACKED", nil, nil, "These goals do not receive savings or count toward interval totals.")
-        for _, goal in ipairs(status.untracked) do
-            render("goal", goal.name, goal.saved, goal.target,
-                "Not tracked - savings allocation released. Target " .. ns.MoneyText(goal.target)
-                    .. ". Click to edit and enable tracking.", goal)
+    local completed={}
+    local untrackedHeading=false
+    for _,goal in ipairs(status.untracked) do
+        if goal.completedAt then completed[#completed+1]=goal
+        else
+            if not untrackedHeading then render("heading","NOT TRACKED",nil,nil,"These goals do not receive savings."); untrackedHeading=true end
+            render("goal",goal.name,goal.saved,goal.target,"Savings allocation released. Target " .. ns.MoneyText(goal.target) .. ". Click to edit.",goal)
+        end
+    end
+    if #completed>0 then
+        local history=render("heading",(ns.db.completedHistoryExpanded and "− " or "+ ") .. "Completed goals (" .. #completed .. ")",nil,nil,"Click to expand or collapse completed goals.")
+        history:SetScript("OnClick",function() ns.db.completedHistoryExpanded=not ns.db.completedHistoryExpanded; ns.RefreshUI() end)
+        if ns.db.completedHistoryExpanded then
+            for _,goal in ipairs(completed) do render("goal",goal.name,nil,goal.target,"Completed. Click to view or restart this goal.",goal) end
         end
     end
     if status.count == 0 then
@@ -580,7 +595,7 @@ local function refreshGoalOverview(status)
     local contentHeight = math.max(1, y)
     -- Bound the overview so the editor and tips remain reachable on small screens.
     local screenHeight = UIParent:GetHeight() or 1080
-    local lowerHeight = ns.db.tipsCollapsed == true and 516 or 596
+    local lowerHeight = ns.db.showGoldTips == false and 488 or (ns.db.tipsCollapsed == true and 516 or 596)
     local availableHeight = math.max(44, screenHeight - lowerHeight - 40)
     local viewportHeight = math.min(OVERVIEW_MAX_HEIGHT, availableHeight, contentHeight)
     overview.content:SetHeight(contentHeight)
@@ -609,14 +624,15 @@ local function layoutMainPage()
     tooltip(ui.goldTipToggle,collapsed and "Expand gold tips" or "Collapse gold tips",
         "Show or hide the tip text. Your choice is saved; the arrows still browse tips.")
     local main=ui.pages.main
-    main:SetHeight(tipsTop+ui.goldTips:GetHeight()); main.windowHeight=main:GetHeight()+78
+    ui.tipDivider:SetShown(ns.db.showGoldTips ~= false)
+    main:SetHeight(tipsTop+(ns.db.showGoldTips == false and 0 or ui.goldTips:GetHeight())); main.windowHeight=main:GetHeight()+78
     if ui.currentPage=="main" and ui:GetHeight()~=main.windowHeight then ns.ResizePage(main.windowHeight) end
 end
 local function refreshGoldTips(step)
     local ui=ns.ui
     if not ui or not ui.goldTips then return end
     local bracket=ns.GetGoldTipBracket(ns.GetPlayerLevel())
-    ui.goldTips:SetShown(bracket~=nil)
+    ui.goldTips:SetShown(bracket~=nil and ns.db.showGoldTips ~= false)
     if not bracket then return end
     if ui.goldTipBracket~=bracket then ui.goldTipBracket=bracket; ui.goldTipIndex=1 end
     ui.goldTipIndex=((ui.goldTipIndex-1+(step or 0))%#bracket.tips)+1
@@ -651,10 +667,11 @@ function ns.RefreshUI()
             ui.levelGoalAmount:SetText(""); ui.levelGoalDetail:SetText("Create or choose a goal to see its target.")
         else
             if trainingOnly then
-                ui.levelGoalAmount:SetText(ns.MoneyText(budget.trainingDue))
-                ui.levelGoalDetail:SetText("Training for the current and next two levels")
+                ui.levelGoalAmount:SetText(ns.db.trainingProtection==false and "" or ns.MoneyText(budget.trainingDue))
+                ui.levelGoalDetail:SetText(ns.db.trainingProtection==false and "Training protection is off" or "Training for the current and next two levels")
             elseif timed then
-                ui.levelGoalAmount:SetText(ns.MoneyText(progress.expected))
+                local _,addition=ns.StatusInterval(g,ns.GetPlayerLevel())
+                ui.levelGoalAmount:SetText(ns.MoneyText(addition))
                 ui.levelGoalDetail:SetText(g.goalType=="date" and "Based on your calendar deadline" or "Based on logged-in play time")
             else
                 local step=Model.LevelPlanStep(g,ns.GetPlayerLevel())
@@ -669,15 +686,20 @@ function ns.RefreshUI()
             or "The total amount to aim for before your next level. Add this level is the planned increase from your current-level checkpoint. The Savings plan lists those targets under By level. Actual saved progress compares against the checkpoint already reached.")
             .. (g.active==false and " This goal is not tracked; its savings allocation has been released." or ""))
         if g.active==false then
-            ui.progress:SetText("Not tracked - savings allocation released")
-            ui.levelGoalDetail:SetText("Enable tracking to fund this goal again.")
+            ui.progress:SetText(g.completedAt and "Completed - savings allocation released" or "Not tracked - savings allocation released")
+            ui.levelGoalDetail:SetText(g.completedAt and "Completed. Enable tracking to start saving again." or "Enable tracking to fund this goal again.")
         elseif g.targetCopper==0 and g.includeClassTraining then
-            ui.progress:SetText("Training funded " .. ns.MoneyText(budget.trainingFunded) .. " / " .. ns.MoneyText(budget.trainingDue))
+            ui.progress:SetText(ns.db.trainingProtection==false and "Training protection is off" or ("Training funded " .. ns.MoneyText(budget.trainingFunded) .. " / " .. ns.MoneyText(budget.trainingDue)))
         else ui.progress:SetText(ns.MoneyText(progress.saved) .. " / " .. ns.MoneyText(progress.target) .. "  |  "
             .. (progress.behind>0 and "Behind " or "Ahead ") .. ns.MoneyText(progress.behind>0 and progress.behind or progress.ahead)) end
+        if ui.complete then ui.complete:SetEnabled(g.active and g.targetCopper>0 and (g.savedCopper or 0)>=g.targetCopper) end
         renderPlan(g)
     end
-    ui.warnings:SetChecked(ns.db.warnings); ui.toastToggle:SetChecked(ns.db.levelUpToasts)
+    ui.warnings:SetChecked(ns.db.warnings)
+    ns.UpdateWarningControls(); ui.toastToggle:SetChecked(ns.db.levelUpToasts)
+    for _,setting in ipairs(ui.summarySettings or {}) do
+        setting.control:SetChecked(ns.db[setting.key] ~= false)
+    end
     if refreshGoalList then refreshGoalList() end
     if ns.RefreshExpensePlanner then ns.RefreshExpensePlanner() end
 end
@@ -685,30 +707,76 @@ refreshGoalList=function()
     local picker=ns.ui.goalPicker; if not picker then return end
     picker.rows=picker.rows or {}
     for _,row in ipairs(picker.rows) do row:Hide(); row.deleteGoal:Hide() end
+    local completedCount=0
+    for _,goal in ipairs(ns.GetGoals()) do if goal.completedAt then completedCount=completedCount+1 end end
+    picker.history:SetText((ns.db.completedHistoryExpanded and "− " or "+ ") .. "Completed (" .. completedCount .. ")")
+    local visible=0
     for index,goal in ipairs(ns.GetGoals()) do
-        local choice=index; local row=picker.rows[index]
+        if not goal.completedAt or ns.db.completedHistoryExpanded then
+        visible=visible+1
+        local choice=index; local row=picker.rows[visible]
         if not row then
             row=button(picker.content,"",0,0,264,function() end)
             row.deleteGoal=button(picker.content,"Delete",272,0,78,function() end)
-            picker.rows[index]=row
+            picker.rows[visible]=row
         end
-        row:ClearAllPoints(); row:SetPoint("TOPLEFT",0,-(index-1)*34)
-        row.deleteGoal:ClearAllPoints(); row.deleteGoal:SetPoint("TOPLEFT",272,-(index-1)*34)
+        row:ClearAllPoints(); row:SetPoint("TOPLEFT",0,-(visible-1)*34)
+        row.deleteGoal:ClearAllPoints(); row.deleteGoal:SetPoint("TOPLEFT",272,-(visible-1)*34)
         row.deleteGoal:SetScript("OnClick",function() deleteGoal(choice) end)
         tooltip(row.deleteGoal,"Delete " .. goal.name,"Remove this goal and its plan. Your actual gold and trainer data are kept.")
         row.deleteGoal:Show()
         local deadline=goal.goalType=="date" and date("%m/%d",goal.deadlineTime) or goal.goalType=="played" and string.format("%.1fh",goal.durationSeconds/3600) or "Lv " .. goal.targetLevel
-        row:SetText(goal.name .. " (" .. deadline .. ")")
+        row:SetText((goal.completedAt and "Completed: " or visible .. ". ") .. goal.name .. " (" .. deadline .. ")")
+        row.goalIndex=choice
+        row:RegisterForDrag("LeftButton")
+        row:SetScript("OnDragStart",function(self) self.dragging=true; self:SetAlpha(0.5) end)
+        row:SetScript("OnDragStop",function(self)
+            self.dragging=false; self:SetAlpha(1)
+            local _,cursorY=GetCursorPosition()
+            local scale=picker.content:GetEffectiveScale() or 1
+            local top=picker.content:GetTop()
+            if top and cursorY then
+                local slot=math.max(1,math.min(visible,math.floor((top-cursorY/scale)/34)+1))
+                local destination=picker.rows[slot]
+                if destination then ns.MoveGoalPriority(choice,destination.goalIndex) end
+            end
+        end)
         tooltip(row,goal.name,"Click to edit this goal.")
-        row:SetScript("OnClick",function() ns.SaveAllFields(); selected=choice; showEditor(); ns.ShowMainPage() end); row:Show()
+        row:SetScript("OnClick",function(self) if self and self.dragging then return end; ns.SaveAllFields(); selected=choice; showEditor(); ns.ShowMainPage() end); row:Show()
+        end
     end
-    picker.content:SetHeight(math.max(1,#ns.GetGoals()*34))
+    picker.content:SetHeight(math.max(1,visible*34))
     picker.empty:SetText(#ns.GetGoals()==0 and "No goals yet. Go back to create one or choose a preset." or "")
     if ns.ui.currentPage=="goals" then
-        local height=math.max(70,math.min(300,#ns.GetGoals()*34))
-        picker.scroll:SetHeight(height); ns.ResizePage(55+height+50)
+        local height=math.max(70,math.min(300,visible*34))
+        picker.history:ClearAllPoints(); picker.history:SetPoint("TOPLEFT",0,-(height+38))
+        picker.scroll:SetHeight(height); ns.ResizePage(55+height+82)
     end
 end
+function ns.MoveGoalPriority(from,to)
+    local goals=ns.GetGoals()
+    if not goals[from] or not goals[to] or from==to then return end
+    ns.SaveAllFields()
+    local editing=goals[selected]
+    -- Drafts refer to list indices; move those references with their goal.
+    local function movedIndex(index)
+        if index==from then return to end
+        if from<to and index>from and index<=to then return index-1 end
+        if from>to and index>=to and index<from then return index+1 end
+        return index
+    end
+    local buffers=ns.testMoneyCopper~=nil and ns or ns.db
+    local keys=ns.testMoneyCopper~=nil and {"testEditorDraft","testExpenseDraft"} or {"editorDraft","expenseDraft"}
+    for _,key in ipairs(keys) do
+        local pending=buffers[key]
+        if pending and type(pending.index)=="number" then pending.index=movedIndex(pending.index) end
+    end
+    table.insert(goals,to,table.remove(goals,from))
+    for index,goal in ipairs(goals) do if goal==editing then selected=index end end
+    ns.ui.selectedGoalIndex=selected
+    ns.CancelPurchase(); ns.RefreshUI()
+end
+
 -- WoW cannot submit web requests. Give players a selectable browser destination
 -- without adding a network dependency or collecting any character information.
 ns.BUG_REPORT_URL = "https://github.com/Vellum670/WoW-Forever-Addon/issues/new"
@@ -749,21 +817,90 @@ function ns.OpenBugReport()
     page.link:HighlightText()
 end
 
+function ns.SaveWarningSilence()
+    local ui = ns.ui
+    if not ui or not ui.warningDuration then return end
+    local value = tonumber(ui.warningDuration:GetText())
+    local seconds = value and value * ui.warningDurationUnit
+    if not ns.Model.IsInteger(seconds, 30, 3600) then
+        ui.warningDurationError:SetText("Enter a duration from 30 seconds to 60 minutes.")
+        return false
+    end
+    ns.db.warningSilenceSeconds = seconds
+    ui.warningDurationError:SetText("")
+    return true
+end
+
+function ns.UpdateWarningControls()
+    local ui = ns.ui
+    if not ui or not ui.warningDuration then return end
+    ui.warningDuration:SetEnabled(ns.db.warnings)
+    ui.warningUnit:SetEnabled(ns.db.warnings)
+    if not ns.db.warnings then ui.warningUnits:Hide() end
+end
+
 local function settingsPage()
     if ns.ui.pages.settings then ns.ShowPage("settings"); return end
-    local page=makePage("settings","Settings",310)
+    local page=makePage("settings","Settings",544)
     ns.ui.warnings=CreateFrame("CheckButton",nil,page,"UICheckButtonTemplate"); ns.ui.warnings:SetPoint("TOPLEFT",0,-2)
-    label(page,"Confirm before spending protected gold",34,-10,332,"GameFontHighlightSmall")
-    label(page,"Warns before supported purchases use goal savings or training money. Spend anyway silences warnings for two minutes.",34,-34,325,"GameFontDisableSmall")
-    tooltip(ns.ui.warnings,"Purchase confirmations","Checks supported merchant, trainer, repair, and auction purchases before they use protected money. It does not lock your wallet.")
-    ns.ui.warnings:SetScript("OnClick",function(self) ns.db.warnings=self:GetChecked() and true or false; ns.CancelPurchase() end)
-    ns.ui.toastToggle=CreateFrame("CheckButton",nil,page,"UICheckButtonTemplate"); ns.ui.toastToggle:SetPoint("TOPLEFT",0,-97)
-    label(page,"Show goal progress notifications",34,-105,332,"GameFontHighlightSmall")
+    label(page,"Enable excluded-ability warnings",34,-10,332,"GameFontHighlightSmall")
+    label(page,"Warn before buying a greyed-out class spell or ability.",34,-34,325,"GameFontDisableSmall")
+    tooltip(ns.ui.warnings,"Excluded-ability warnings","Warns when buying a greyed-out class ability, regardless of protected gold. Enabled abilities and other purchases do not show this warning.")
+    ns.ui.warnings:SetScript("OnClick",function(self) ns.db.warnings=self:GetChecked() and true or false; ns.CancelPurchase(); ns.UpdateWarningControls() end)
+    label(page,"Silence excluded-ability warnings after Spend anyway",0,-80,368,"GameFontHighlightSmall")
+    local seconds = ns.GetWarningSilenceSeconds()
+    ns.ui.warningDurationUnit = seconds % 60 == 0 and 60 or 1
+    ns.ui.warningDuration = edit(page,0,-105,70,tostring(seconds / ns.ui.warningDurationUnit),false)
+    ns.ui.warningDuration:SetScript("OnEditFocusLost",ns.SaveWarningSilence)
+    ns.ui.warningDurationError = label(page,"",0,-160,368,"GameFontHighlightSmall")
+    ns.ui.warningDurationError:SetTextColor(1,0.65,0.35)
+    label(page,"Allowed: 30 seconds–60 minutes",0,-138,368,"GameFontDisableSmall")
+    local choices = CreateFrame("Frame",nil,page)
+    choices:SetPoint("TOPLEFT",80,-130); choices:SetSize(130,54)
+    choices:SetFrameLevel(page:GetFrameLevel()+10); choices:Hide()
+    ns.ui.warningUnits = choices
+    ns.ui.warningUnit = button(page,ns.ui.warningDurationUnit == 60 and "Minutes ▾" or "Seconds ▾",80,-105,130,function()
+        choices:SetShown(not choices:IsShown())
+    end)
+    for index,unit in ipairs({{text="Seconds",factor=1},{text="Minutes",factor=60}}) do
+        button(choices,unit.text,0,-(index-1)*26,130,function()
+            -- Preserve the duration when switching its display unit, including invalid drafts.
+            local value = tonumber(ns.ui.warningDuration:GetText())
+            if value then ns.ui.warningDuration:SetText(tostring(value * ns.ui.warningDurationUnit / unit.factor)) end
+            ns.ui.warningDurationUnit = unit.factor
+            ns.ui.warningUnit:SetText(unit.text .. " ▾")
+            choices:Hide()
+            ns.SaveWarningSilence()
+        end)
+    end
+    page:SetScript("OnHide",function() choices:Hide() end)
+    ns.UpdateWarningControls()
+    ns.ui.toastToggle=CreateFrame("CheckButton",nil,page,"UICheckButtonTemplate"); ns.ui.toastToggle:SetPoint("TOPLEFT",0,-187)
+    label(page,"Show goal progress notifications",34,-195,332,"GameFontHighlightSmall")
     tooltip(ns.ui.toastToggle,"Goal progress notifications","Show goal progress on login and level-up. Zoning and UI reloads do not trigger a notification.")
     ns.ui.toastToggle:SetScript("OnClick",function(self) ns.db.levelUpToasts=self:GetChecked() and true or false; if not ns.db.levelUpToasts then ns.HideLevelUpToast() end end)
-    ns.ui.moveToast=button(page,"Move toast",0,-150,230,function() ns.ToggleToastMove() end)
-    button(page,"Reset position",238,-150,130,function() ns.ResetToastPosition() end)
-    label(page,"Drag the preview. Escape or pressing Move toast again saves its position.",0,-186,368,"GameFontHighlightSmall")
+    ns.ui.moveToast=button(page,"Move toast",0,-240,230,function() ns.ToggleToastMove() end)
+    button(page,"Reset position",238,-240,130,function() ns.ResetToastPosition() end)
+    label(page,"Drag the preview. Escape or pressing Move toast again saves its position.",0,-276,368,"GameFontHighlightSmall")
+    ns.ui.summarySettings = {}
+    for index,setting in ipairs({
+        {key="loginChatSummaries",text="Chat summary on login or reload",help="Show your goal summary once when logging in or reloading. Zoning does not trigger it."},
+        {key="milestoneChatSummaries",text="Chat summary at goal milestones",help="Show a summary on level-up, a new calendar day, or an hour of goal play time. /mf status remains available."},
+        {key="trainingProtection",text="Protect class-training gold",help="Reserve money for included class abilities. Turn off to release training protection and hide training costs everywhere."},
+        {key="showGoldTips",text="Show gold-making tips",help="Show the main-page tips section. Hiding it preserves your collapse preference."},
+    }) do
+        local y = -318-(index-1)*32
+        local control = CreateFrame("CheckButton",nil,page,"UICheckButtonTemplate")
+        control:SetPoint("TOPLEFT",0,y)
+        label(page,setting.text,34,y-8,332,"GameFontHighlightSmall")
+        tooltip(control,setting.text,setting.help)
+        control:SetScript("OnClick",function(self)
+            ns.db[setting.key] = self:GetChecked() and true or false
+            if setting.key=="trainingProtection" then ns.CancelPurchase() end
+            ns.RefreshUI()
+        end)
+        ns.ui.summarySettings[index] = {key=setting.key,control=control}
+    end
     ns.RefreshUI(); ns.ShowPage("settings")
 end
 createUI=function()
@@ -819,7 +956,13 @@ createUI=function()
     end)
     ui.planning=button(editor,"Additional Expenses",186,-223,182,planCurrentGoal)
     button(editor,"Savings plan",0,-257,178,function() ns.ShowPage("plan") end)
-    ui.delete=button(editor,"Delete goal",186,-257,182,function() deleteGoal(selected) end)
+    ui.complete=button(editor,"Complete",186,-257,88,function()
+        ns.SaveAllFields()
+        local goal=ns.GetGoals()[selected]
+        if goal then ns.ShowGoalCompletion(goal,ns.testMoneyCopper~=nil) end
+    end)
+    tooltip(ui.complete,"Confirm goal completion","Mark a fully funded goal complete and release its allocation. Your actual gold stays in your wallet.")
+    ui.delete=button(editor,"Delete goal",280,-257,88,function() deleteGoal(selected) end)
     tooltip(ui.delete,"Delete goal","Remove the selected goal and its plan. Your actual gold and trainer data are kept.")
     for _,field in ipairs({ui.name,ui.level,unpack(ui.amount)}) do field:SetScript("OnEditFocusLost",saveCurrentGoal) end
     local tipDivider=main:CreateTexture(nil,"BORDER"); ui.tipDivider=tipDivider
@@ -838,7 +981,9 @@ createUI=function()
     tooltip(ui.goldTipPrevious,"Previous gold tip","Browse gold-making ideas for your current level bracket.")
     tooltip(ui.goldTipNext,"Next gold tip","Browse gold-making ideas for your current level bracket.")
     local goals=makePage("goals","Your goals",340); ui.goalPicker=goals
-    goals.scroll=CreateFrame("ScrollFrame",nil,goals,"UIPanelScrollFrameTemplate"); goals.scroll:SetPoint("TOPLEFT",0,0); goals.scroll:SetSize(354,240)
+    goals.scroll=CreateFrame("ScrollFrame",nil,goals,"UIPanelScrollFrameTemplate"); goals.scroll:SetPoint("TOPLEFT",0,-32); goals.scroll:SetSize(354,240)
+    label(goals,"Drag goals to reorder: top goals receive savings first.",0,0,350,"GameFontHighlightSmall")
+    goals.history=button(goals,"Completed history",0,-280,170,function() ns.db.completedHistoryExpanded=not ns.db.completedHistoryExpanded; ns.RefreshUI() end)
     goals.content=CreateFrame("Frame",nil,goals.scroll); goals.content:SetSize(350,1); goals.scroll:SetScrollChild(goals.content)
     goals.empty=label(goals.content,"",0,0,350,"GameFontHighlightSmall")
     goals:SetScript("OnShow",function() refreshGoalList() end)
@@ -882,7 +1027,7 @@ end
 
 function ns.ShowWarning(pending)
     if not ns.warningFrame then
-        local frame=window("MountfundSavingsWarning",400,300,"Spend protected money?"); ns.warningFrame=frame
+        local frame=window("MountfundSavingsWarning",400,300,"Train excluded ability?"); ns.warningFrame=frame
         frame:SetFrameLevel(3000)
         -- The tooltip backdrop texture is translucent even with an opaque tint.
         -- Give this confirmation its own solid surface so world labels do not show through.
@@ -891,7 +1036,7 @@ function ns.ShowWarning(pending)
         surface:SetColorTexture(0.055,0.04,0.025,1)
         frame.itemName=label(frame,"",20,-57,360,"GameFontHighlight")
         frame.itemName:SetWordWrap(false); frame.itemName:SetHeight(20)
-        label(frame,"This purchase uses money you set aside.",20,-82,360,"GameFontDisableSmall")
+        label(frame,"You chose not to train this spell or ability.",20,-82,360,"GameFontDisableSmall")
         frame.moneyRows={}
         for index,row in ipairs({
             { key="cost", text="Purchase cost" },
@@ -910,8 +1055,9 @@ function ns.ShowWarning(pending)
         local divider=frame:CreateTexture(nil,"BORDER")
         divider:SetPoint("TOPLEFT",20,-210); divider:SetSize(360,1)
         divider:SetColorTexture(0.65,0.48,0.22,0.4)
-        local note=label(frame,"Spend anyway silences warnings for 2 minutes.",20,-222,360,"GameFontDisableSmall")
-        note:SetHeight(26)
+        local note=label(frame,"",20,-222,360,"GameFontDisableSmall")
+        note:SetHeight(34)
+        frame.silenceNote = note
         frame:SetScript("OnHide",function() ns.pending=nil end)
         button(frame,"Spend anyway",20,-260,170,ns.ConfirmPurchase); button(frame,"Cancel",210,-260,170,ns.CancelPurchase)
     end
@@ -920,5 +1066,85 @@ function ns.ShowWarning(pending)
     for key,amount in pairs({cost=b.cost,remaining=b.remaining,reserved=b.reserved,used=b.afterShortfall}) do
         ns.warningFrame.moneyRows[key].amount:SetText(ns.MoneyText(amount))
     end
+    ns.warningFrame.silenceNote:SetText("Spend anyway silences warnings for " .. ns.WarningSilenceText() .. ". Change or disable excluded-ability warnings in Settings.")
     ns.warningFrame:Show()
+end
+
+
+-- Completion needs explicit approval and a fresh funding check; notification alone never changes a goal.
+local completionNotified = setmetatable({}, {__mode="k"})
+function ns.TransferCompletionNotice(previous, updated)
+    if previous and completionNotified[previous] and previous.targetCopper==updated.targetCopper
+        and previous.active==updated.active and previous.completedAt==updated.completedAt then
+        completionNotified[updated]=true
+    end
+end
+function ns.ShowGoalCompletion(goal, preview)
+    if not goal.active or goal.targetCopper<=0 or (goal.savedCopper or 0)<goal.targetCopper then return end
+    if not ns.completionFrame then
+        local frame=window("MountfundCompletion",330,184,"Goal funded!")
+        ns.completionFrame=frame
+        frame:SetClampedToScreen(true)
+        frame.detail=label(frame,"",16,-56,298,"GameFontHighlightSmall")
+        frame.detail:SetHeight(66)
+        button(frame,"Mark complete",16,-140,144,function() ns.ConfirmGoalCompletion() end)
+        button(frame,"Later",170,-140,144,function() frame:Hide() end)
+        frame:SetScript("OnHide",function() ns.pendingCompletion=nil end)
+    end
+    local frame=ns.completionFrame
+    ns.pendingCompletion={goal=goal,preview=preview}
+    local position=ns.db and ns.db.toastPosition
+    local x,y=0.5,0.895
+    if position and type(position.x)=="number" and type(position.y)=="number"
+        and position.x==position.x and position.y==position.y then
+        x,y=math.max(0,math.min(1,position.x)),math.max(0,math.min(1,position.y))
+    end
+    frame:ClearAllPoints(); frame:SetPoint("TOP",UIParent,"TOP",(x-0.5)*UIParent:GetWidth(),(y-1)*UIParent:GetHeight())
+    frame.detail:SetText((preview and "Preview: " or "") .. goal.name .. " is fully funded!\nMark complete and release its savings allocation? Your gold stays in your wallet.")
+    if ns.HideLevelUpToast then ns.HideLevelUpToast() end
+    frame:Show()
+    if PlaySound then PlaySound(SOUNDKIT and SOUNDKIT.IG_QUEST_LOG_OPEN or 844,"SFX") end
+end
+function ns.ConfirmGoalCompletion()
+    local pending=ns.pendingCompletion
+    if not pending then return end
+    local goal=pending.goal
+    if not pending.preview then
+        if ns.testMoneyCopper~=nil then ns.completionFrame:Hide(); return end
+        local exists=false
+        for _,current in ipairs(ns.db.goals) do if current==goal then exists=true end end
+        ns.Model.Reconcile(ns.db.goals,GetMoney())
+        if not exists or not goal.active or goal.targetCopper<=0 or (goal.savedCopper or 0)<goal.targetCopper then
+            ns.completionFrame:Hide(); ns.Print("This goal is no longer fully funded."); ns.Changed(); return
+        end
+        goal.completedAt=ns.Now(); goal.completedCopper=goal.targetCopper
+        goal.active=false; goal.savedCopper=0
+        ns.CancelPurchase()
+        if ns.ui and ns.GetGoals()[selected]==goal then showEditor() end
+    end
+    ns.completionFrame:Hide()
+    if pending.preview then ns.Print("Completion preview finished; saved goals are unchanged.") end
+    ns.Changed()
+end
+function ns.CheckGoalCompletion()
+    if not ns.db or ns.outOfWorld or ns.testMoneyCopper~=nil then return end
+    -- Spending may happen while a prompt is open or during combat. Rearm now,
+    -- even when showing another notification must wait.
+    for _,goal in ipairs(ns.db.goals) do
+        if not goal.active or goal.targetCopper<=0 or (goal.savedCopper or 0)<goal.targetCopper then
+            completionNotified[goal]=nil
+        end
+    end
+    if ns.completionFrame and ns.completionFrame:IsShown() then return end
+    if InCombatLockdown and InCombatLockdown() then return end
+    for _,goal in ipairs(ns.db.goals) do
+        if goal.active and goal.targetCopper>0 and (goal.savedCopper or 0)>=goal.targetCopper and not completionNotified[goal] then
+            completionNotified[goal]=true
+            ns.ShowGoalCompletion(goal,false)
+            return
+        end
+    end
+end
+function ns.TestGoalCompletion()
+    ns.ShowGoalCompletion({name="Example mount fund",active=true,targetCopper=1000000,savedCopper=1000000},true)
 end
