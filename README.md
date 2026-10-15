@@ -36,8 +36,10 @@ time**:
 Fields save silently when you leave them; buttons and ability selections save
 immediately. **Escape** saves and closes the window, including a field you are
 still typing in. Incomplete input is kept for reopening without replacing valid
-goal settings. The main window is 400 × 560 UI units. Menus open as pages in this
-same window, with **Back** on other pages; short pages shrink to fit their content.
+goal settings. The main window stays 400 UI units wide. With one goal, it is 548
+units tall with tips expanded and 468 with tips collapsed; multiple goals add a
+12-unit totals row. Menus open as pages in this same window, with **Back** on other
+pages; short pages shrink to fit their content.
 Savings plans and expense grids also resize when they contain only a few rows.
 Coin amounts use native gold, silver, and copper icons.
 
@@ -45,6 +47,8 @@ Gold-making tips appear at the bottom of the main page for your current level
 bracket. Each reopening advances to the next tip, wrapping after the last one.
 Use the arrows to browse three leveling tips or fifteen level-60 ideas;
 each includes its farming location and selling context. Hover for the full text.
+Use **− / +** beside the tip heading to collapse or expand the text. This preference
+survives reload; browsing and hover details remain available while collapsed.
 Tips switch brackets as you level and also follow `/ge testlevel` previews.
 
 Delete a saved goal using **Goals → Delete** beside its entry, or **Delete goal**
@@ -64,9 +68,11 @@ initial-investment fields or confirmation steps.
 The default **Income-based** level curve puts less saving at low levels and more
 at higher levels. It uses relative quest reward/XP estimates, rather than claiming
 you should own a fixed amount of gold at each level. Other choices are **Steady
-saving**, **Save more later**, **Light start**, and **Late push**, with descriptions
-on hover. Time goals start with **Steady saving** and offer those same custom
-curves. Existing level checkpoints are retained when valid. The **Savings plan**
+saving** and **Save more later**, with descriptions on hover. Time goals start
+with **Steady saving** and can switch to **Save more later**. Old **Light start**
+and **Late push** goals migrate to **Save more later**, retaining their amounts,
+saved allocations, deadlines, and valid checkpoints; their expected savings
+schedule changes to the new curve. The **Savings plan**
 table shows each cumulative goal in the right column. In level plans, **This
 level** shows a `+` scheduled addition and a `-` expense total, including selected,
 unpaid training and other purchases at their due levels. Hover the expense line
@@ -96,7 +102,10 @@ you will level.
 This includes any positive wallet change, such as loot, a sale, or received
 mail; it does not claim to distinguish their sources. Spending uses unallocated
 cash first, then reduces savings if necessary. Goals do not move coins out of
-your wallet. Uncheck **Track this goal** to release its allocation immediately.
+your wallet. Uncheck **Track this goal** to release its allocation immediately
+and stop funding it. Checking it again starts funding from zero; the released
+allocation is not restored. Actual gold stays in your wallet. With only one goal,
+the main page shows its progress once rather than repeating aggregate totals.
 
 Old goals migrate to your current level with a safe initial allocation; old
 planned reserves are not treated as money you actually saved. Income received
@@ -203,8 +212,13 @@ appear. Unknown prices are flagged; the known-cost total cannot guarantee enough
 money for unknown costs.
 See the research document for catalog provenance and eligibility limitations.
 
-Profession Training uses observed profession ranks and recipes. A riding quote
-replaces an itemized mount's starter estimate. You can also add manual expenses
+Profession Training uses observed profession ranks and recipes. The first known
+riding quote separates an itemized mount's entered budget into a mount allowance
+and riding fee, preserving the combined amount while both purchases are unpaid.
+Later quotes update only the riding fee; the mount allowance remains separate.
+These allowances are budget estimates, not observed mount-item prices. Previously
+discarded allowances cannot be recovered automatically; add a manual mount cost
+to an older affected goal. You can also add manual expenses
 with individual amounts and due levels. Included, unpaid non-class expenses
 set an itemized goal's amount and follow its savings curve. Manual cost fields
 save on leaving the field; **New cost** starts another entry. Use the small **x**
@@ -228,8 +242,9 @@ action does not trigger a warning merely
 because you are behind a future savings target.
 
 The addon checks the selection, price, funds, and savings again on confirmation.
-Changed selections or prices cancel the pending action; changes to funds or
-goals refresh the warning. Closing the merchant, trainer, or auction house
+Changed selections or prices cancel the pending action; changes to the wallet,
+protected amount, or protected money used refresh the warning. Routine display
+refreshes do not require another confirmation. Closing the merchant, trainer, or auction house
 cancels pending actions. Expired commodity quotes cannot be accepted.
 
 Native UI coverage:

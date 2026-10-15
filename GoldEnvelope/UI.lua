@@ -408,6 +408,27 @@ function ns.CatalogChanged()
     if draft then ns.SyncExpenses(draft); if draft.planMode=="items" then setCoins(ns.ui.amount,draft.targetCopper) end end
     ns.RefreshUI(); if ns.RefreshExpensePlanner then ns.RefreshExpensePlanner() end
 end
+local function layoutMainPage()
+    local ui=ns.ui; if not ui or not ui.goldTipToggle then return end
+    local multiple=#ns.GetGoals()>1
+    local editorTop=multiple and 82 or 70
+    for _,item in ipairs(ui.mainNav) do
+        item.control:ClearAllPoints(); item.control:SetPoint("TOPLEFT",item.x,multiple and -43 or -31)
+    end
+    ui.editor:ClearAllPoints(); ui.editor:SetPoint("TOPLEFT",0,-editorTop)
+    local tipsTop=editorTop+292
+    local collapsed=ns.db.tipsCollapsed==true
+    ui.tipDivider:ClearAllPoints(); ui.tipDivider:SetPoint("TOPLEFT",0,-(tipsTop-6))
+    ui.goldTips:ClearAllPoints(); ui.goldTips:SetPoint("TOPLEFT",0,-tipsTop)
+    ui.goldTips:SetHeight(collapsed and 28 or 108)
+    ui.goldTipText:SetShown(not collapsed)
+    ui.goldTipToggle:SetText(collapsed and "+" or "-")
+    tooltip(ui.goldTipToggle,collapsed and "Expand gold tips" or "Collapse gold tips",
+        "Show or hide the tip text. Your choice is saved; the arrows still browse tips.")
+    local main=ui.pages.main
+    main:SetHeight(tipsTop+ui.goldTips:GetHeight()); main.windowHeight=main:GetHeight()+78
+    if ui.currentPage=="main" and ui:GetHeight()~=main.windowHeight then ns.ResizePage(main.windowHeight) end
+end
 local function refreshGoldTips(step)
     local ui=ns.ui
     if not ui or not ui.goldTips then return end
@@ -421,15 +442,19 @@ local function refreshGoldTips(step)
     ui.goldTipCount:SetText(ui.goldTipIndex .. "/" .. #bracket.tips)
     ui.goldTipText:SetText("|cffffd36e" .. tip.title .. "|r\n" .. tip.text)
     tooltip(ui.goldTips,tip.title,tip.text)
+    layoutMainPage()
 end
 function ns.RefreshUI()
     if not ns.ui or not ns.db then return end
     local ui=ns.ui; local budget=ns.GetBudget()
     refreshGoldTips()
-    ui.summary:SetText((ns.testMoneyCopper~=nil and "Test wallet " or "Wallet ") .. ns.MoneyText(budget.balance)
+    local summary=(ns.testMoneyCopper~=nil and "Test wallet " or "Wallet ") .. ns.MoneyText(budget.balance)
         .. (ns.testPlayerLevel and "  [Test level " .. ns.testPlayerLevel .. "]" or "")
-        .. "\nSaved " .. ns.MoneyText(budget.saved) .. "  |  " .. (budget.behind>0 and "Behind " or "Ahead ")
-        .. ns.MoneyText(budget.behind>0 and budget.behind or budget.ahead))
+    if #ns.GetGoals()>1 then
+        summary=summary .. "\nSaved " .. ns.MoneyText(budget.saved) .. "  |  " .. (budget.behind>0 and "Behind " or "Ahead ")
+            .. ns.MoneyText(budget.behind>0 and budget.behind or budget.ahead)
+    end
+    ui.summary:SetText(summary)
     if draft then
         local saved=ns.GetGoals()[selected]; if saved then draft.savedCopper=saved.savedCopper end
         local g=saved or draft; local progress=Model.GoalProgress(g,ns.GetPlayerLevel())
@@ -451,8 +476,11 @@ function ns.RefreshUI()
             (trainingOnly and "The shared training budget for your current level and the next two levels."
             or timed and "The total amount planned by now on this goal's calendar or play-time schedule."
             or "The total amount planned to be saved toward this goal by your current level. Add this level shows the scheduled increase.")
-            .. (g.active==false and " This goal is paused." or ""))
-        if g.targetCopper==0 and g.includeClassTraining then
+            .. (g.active==false and " This goal is not tracked; its savings allocation has been released." or ""))
+        if g.active==false then
+            ui.progress:SetText("Not tracked - savings allocation released")
+            ui.levelGoalDetail:SetText("Enable tracking to fund this goal again.")
+        elseif g.targetCopper==0 and g.includeClassTraining then
             ui.progress:SetText("Training funded " .. ns.MoneyText(budget.trainingFunded) .. " / " .. ns.MoneyText(budget.trainingDue))
         else ui.progress:SetText(ns.MoneyText(progress.saved) .. " / " .. ns.MoneyText(progress.target) .. "  |  "
             .. (progress.behind>0 and "Behind " or "Ahead ") .. ns.MoneyText(progress.behind>0 and progress.behind or progress.ahead)) end
@@ -515,10 +543,12 @@ createUI=function()
     ui.back=button(ui,"Back",16,-14,70,ns.GoBack); ui.back:Hide()
     local main=makePage("main","Gold Envelope",560); main:SetHeight(482); main:Show(); ui.currentPage="main"
     ui.summary=label(main,"",0,0,368,"GameFontHighlightSmall")
-    button(main,"Goals",0,-43,74,function() ns.ShowPage("goals") end)
-    button(main,"New",82,-43,54,function() ns.SaveAllFields(); selected=#ns.GetGoals()+1; showEditor() end)
-    button(main,"Presets",144,-43,86,function() ns.ShowPage("presets") end)
-    button(main,"Settings",238,-43,130,settingsPage)
+    ui.mainNav={
+        {x=0,control=button(main,"Goals",0,-43,74,function() ns.ShowPage("goals") end)},
+        {x=82,control=button(main,"New",82,-43,54,function() ns.SaveAllFields(); selected=#ns.GetGoals()+1; showEditor() end)},
+        {x=144,control=button(main,"Presets",144,-43,86,function() ns.ShowPage("presets") end)},
+        {x=238,control=button(main,"Settings",238,-43,130,settingsPage)},
+    }
     local editor=CreateFrame("Frame",nil,main); editor:SetPoint("TOPLEFT",0,-82); editor:SetSize(368,282); ui.editor=editor
     ui.selection=label(editor,"",0,0,368); ui.progress=label(editor,"",0,-19,368,"GameFontHighlightSmall")
     ui.levelGoal=CreateFrame("Frame",nil,editor); ui.levelGoal:SetPoint("TOPLEFT",0,-40); ui.levelGoal:SetSize(368,32); ui.levelGoal:EnableMouse(true)
@@ -546,9 +576,10 @@ createUI=function()
     label(editor,"Goal amount",0,-161,90); ui.amount=coins(editor,94,-155)
     ui.active=CreateFrame("CheckButton",nil,editor,"UICheckButtonTemplate"); ui.active:SetPoint("TOPLEFT",-4,-188)
     label(editor,"Track this goal",30,-197,164,"GameFontHighlightSmall"); ui.active:SetScript("OnClick",saveCurrentGoal)
+    tooltip(ui.active,"Track this goal","Unchecking releases this goal's saved allocation and stops funding it. Checking again starts funding from zero; it does not restore the released amount. Your actual gold stays in your wallet.")
     ui.training=button(editor,"Class training",186,-189,182,planClassTraining)
     ui.curve=button(editor,"Income-based",0,-223,178,function()
-        draft.curve=(draft.curve+1)%5; if Model.IsTimeGoal(draft) and draft.curve==0 then draft.curve=1 end
+        draft.curve=(draft.curve+1)%3; if Model.IsTimeGoal(draft) and draft.curve==0 then draft.curve=1 end
         refreshEditorControls(); saveCurrentGoal()
     end)
     ui.planning=button(editor,"Additional Expenses",186,-223,182,planCurrentGoal)
@@ -556,13 +587,16 @@ createUI=function()
     ui.delete=button(editor,"Delete goal",186,-257,182,function() deleteGoal(selected) end)
     tooltip(ui.delete,"Delete goal","Remove the selected goal and its plan. Your actual gold and trainer data are kept.")
     for _,field in ipairs({ui.name,ui.level,unpack(ui.amount)}) do field:SetScript("OnEditFocusLost",saveCurrentGoal) end
-    local tipDivider=main:CreateTexture(nil,"BORDER")
+    local tipDivider=main:CreateTexture(nil,"BORDER"); ui.tipDivider=tipDivider
     tipDivider:SetPoint("TOPLEFT",0,-368); tipDivider:SetSize(368,1)
     tipDivider:SetColorTexture(0.65,0.48,0.22,0.4)
     ui.goldTips=CreateFrame("Frame",nil,main); ui.goldTips:SetPoint("TOPLEFT",0,-374); ui.goldTips:SetSize(368,108); ui.goldTips:EnableMouse(true)
-    ui.goldTipHeading=label(ui.goldTips,"",0,0,270,"GameFontNormalSmall")
+    ui.goldTipHeading=label(ui.goldTips,"",0,0,242,"GameFontNormalSmall")
     ui.goldTipText=label(ui.goldTips,"",0,-26,368,"GameFontHighlightSmall")
     ui.goldTipText:SetHeight(82); ui.goldTipText:SetWordWrap(true)
+    ui.goldTipToggle=button(ui.goldTips,"-",246,-2,24,function()
+        ns.db.tipsCollapsed=not ns.db.tipsCollapsed; refreshGoldTips()
+    end)
     ui.goldTipPrevious=button(ui.goldTips,"<",276,-2,24,function() refreshGoldTips(-1) end)
     ui.goldTipCount=label(ui.goldTips,"",302,-7,40,"GameFontHighlightSmall"); ui.goldTipCount:SetJustifyH("CENTER")
     ui.goldTipNext=button(ui.goldTips,">",344,-2,24,function() refreshGoldTips(1) end)

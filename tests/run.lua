@@ -473,7 +473,7 @@ test('legacy goals migrate to the current level without claiming historical savi
 end)
 
 test('the main UI keeps its trade-window width with compact space for gold tips',function()
-    reset(); ns.ToggleUI(); equal(ns.ui.width,400); equal(ns.ui.height,560)
+    reset(); ns.ToggleUI(); equal(ns.ui.width,400); equal(ns.ui.height,548)
     assert(ns.ui.width/344<1.2 and ns.ui.height<=560)
 end)
 test('new presets save immediately from the current level with a safe automatic allocation',function()
@@ -1365,7 +1365,7 @@ test('menus share one window and Back returns through page history',function()
     click(ui,'Presets'); equal(ui.currentPage,'presets'); equal(ui.presetPicker.parent,ui); back()
     click(ui.editor,'Savings plan'); equal(ui.currentPage,'plan'); back()
     click(ui.editor,'Class training'); equal(ui.currentPage,'training'); equal(ns.planningFrame.parent,ui)
-    assert(ui.height<450); back(); equal(ui.height,560)
+    assert(ui.height<450); back(); equal(ui.height,548)
     click(ui.editor,'Additional Expenses'); equal(ui.currentPage,'planning')
     click(ns.planningConsent,'Additional Expenses'); equal(ui.currentPage,'expenses'); back(); equal(ui.currentPage,'main')
     for _,name in ipairs(UISpecialFrames) do
@@ -1374,7 +1374,7 @@ test('menus share one window and Back returns through page history',function()
 end)
 test('curve names replace numbers and successful saving remains silent',function()
     reset(); ns.UsePreset('mount-first')
-    local names={'Steady saving','Save more later','Light start','Late push','Income-based'}
+    local names={'Steady saving','Save more later','Income-based'}
     for _,name in ipairs(names) do ns.ui.curve.scripts.OnClick(); equal(ns.ui.curve.text,name); equal(ns.ui.error.text,'') end
     blur(ns.ui.name,'Quiet mount'); equal(ns.ui.error.text,'')
     click(ns.ui.editor,'Class training'); expenseButton(6178).scripts.OnClick(expenseButton(6178)); equal(ns.ui.error.text,'')
@@ -1540,7 +1540,7 @@ end)
 test('short savings plans fit their rows and time plans keep the goal column visible',function()
     reset(39); ns.UsePreset('mount-first'); click(ns.ui.editor,'Savings plan')
     equal(ns.ui.currentPage,'plan'); equal(ns.ui.scroll.height,70); equal(ns.ui.height,196)
-    assert(ns.ui.planTargetHeading:IsShown()); equal(ns.ui.planTargetHeading.text,'Goal for level'); back(); equal(ns.ui.height,560)
+    assert(ns.ui.planTargetHeading:IsShown()); equal(ns.ui.planTargetHeading.text,'Goal for level'); back(); equal(ns.ui.height,548)
     ns.ui.basis.scripts.OnClick(); click(ns.ui.editor,'Savings plan')
     equal(ns.ui.scroll.height,310); equal(ns.ui.height,436)
     assert(ns.ui.planTargetHeading:IsShown()); equal(ns.ui.planTargetHeading.text,'Goal target')
@@ -1553,7 +1553,7 @@ test('expense forms follow short grids without leaving the old empty area',funct
     equal(page.scroll.height,42); equal(ns.ui.height,323); equal(page.manual.point[3],-140)
     blur(page.expenseName,'Recipes'); blur(page.expenseAmount[1],'1')
     equal(page.scroll.height,54); equal(ns.ui.height,335); equal(page.manual.point[3],-152)
-    back(); equal(ns.ui.height,560)
+    back(); equal(ns.ui.height,548)
 end)
 test('observed overdue prices remain in the budget while icons show the next future rank',function()
     reset(30); knownSpells[6178]=nil
@@ -2231,6 +2231,145 @@ test('each window reopening cycles tips while page changes and refreshes keep th
         ns.CloseUI(); ns.ToggleUI(); equal(ns.ui.goldTipCount.text,index .. '/15')
     end
     ns.CloseUI(); ns.ToggleUI(); equal(ns.ui.goldTipCount.text,'1/15')
+end)
+
+test('mount quotes preserve a separate allowance and only future fee changes alter the total',function()
+    for _,presetID in ipairs({'mount-first','mount-epic'}) do
+        reset(); local g=ns.NewPresetGoal(presetID)
+        local total=g.targetCopper; local fee=presetID=='mount-first' and 200000 or 1000000
+        ns.EnableItemPlanning(g)
+        equal(g.targetCopper,total)
+        ns.db.trainerCatalog.riding={key='riding',source=presetID,name='Riding',level=g.targetLevel,copper=fee,paid=false}
+        ns.SyncExpenses(g)
+        local allowance
+        for _,expense in ipairs(g.expenses) do if expense.key=='manual:initial' then allowance=expense end end
+        assert(allowance); equal(allowance.name,'Mount allowance'); equal(allowance.copper,total-fee)
+        equal(allowance.estimated,false); equal(g.targetCopper,total); assert(M.ValidateGoal(g))
+        ns.db.trainerCatalog.riding.copper=fee-10000; ns.SyncExpenses(g)
+        equal(allowance.copper,total-fee); equal(g.targetCopper,total-10000)
+        ns.SyncExpenses(g); equal(g.targetCopper,total-10000)
+        ns.db.trainerCatalog.riding.paid=true; ns.SyncExpenses(g)
+        equal(g.targetCopper,total-fee); equal(allowance.copper,total-fee)
+    end
+end)
+test('custom mount totals survive quotes observed before itemizing and do not duplicate the allowance',function()
+    reset(); local g=ns.NewPresetGoal('mount-first'); g.targetCopper=1500000
+    ns.db.trainerCatalog.riding={key='riding',source='mount-first',name='Riding',level=40,copper=200000}
+    ns.PrepareGoal(g); equal(g.targetCopper,1500000)
+    ns.EnableItemPlanning(g); equal(g.targetCopper,1500000)
+    ns.EnableItemPlanning(g); equal(g.targetCopper,1500000)
+    local count=0
+    for _,expense in ipairs(g.expenses) do
+        if expense.key=='manual:initial' then count=count+1; equal(expense.copper,1300000) end
+    end
+    equal(count,1); assert(M.ValidateGoal(g))
+    g.savedCopper=10000; ns.db.goals={g}
+    local previousGlobal=GoldEnvelopeDB; GoldEnvelopeDB=copyData(ns.db)
+    eventFrame.scripts.OnEvent(nil,'ADDON_LOADED','GoldEnvelope')
+    ns.sessionStarted=false; eventFrame.scripts.OnEvent(nil,'PLAYER_LOGIN')
+    equal(ns.db.goals[1].targetCopper,1500000); equal(ns.db.goals[1].savedCopper,10000)
+    GoldEnvelopeDB=previousGlobal
+end)
+test('unknown riding prices and excluded estimates preserve the entered mount allowance',function()
+    reset(); local g=ns.NewPresetGoal('mount-first'); ns.EnableItemPlanning(g)
+    ns.db.trainerCatalog.riding={key='riding',source='mount-first',name='Riding',level=40}
+    ns.SyncExpenses(g); equal(g.targetCopper,1000000)
+    local combined
+    for _,expense in ipairs(g.expenses) do if expense.key=='manual:initial' then combined=expense end end
+    assert(combined.estimated); equal(combined.copper,1000000)
+    combined.selected=false; ns.db.trainerCatalog.riding.copper=200000; ns.SyncExpenses(g)
+    equal(combined.selected,false); equal(combined.copper,800000)
+    ns.SyncExpenses(g); equal(combined.copper,800000)
+end)
+test('unchanged purchase warnings confirm once after repeated background refreshes',function()
+    pending(); local before=ns.revision
+    for _=1,3 do elapsed=elapsed+10; eventFrame.scripts.OnUpdate(nil,10) end
+    assert(ns.revision>before); assert(ns.pending)
+    ns.ConfirmPurchase(); equal(executions,1); equal(ns.pending,nil); equal(ns.WarningCooldownRemaining(),120)
+end)
+test('a change to planned training spending still refreshes a warning when reserved totals stay equal',function()
+    reset(); local g=goal(); g.savedCopper=30000; g.includeClassTraining=true; ns.SyncExpenses(g); ns.db.goals={g}
+    executions=0; action={key='training:1',label='Training',cost=30000,classTraining=true}
+    ns.RequestPurchase(read,execute); assert(ns.pending)
+    local protected=ns.pending.budget.reserved
+    action.classTraining=false; ns.ConfirmPurchase()
+    equal(executions,0); assert(ns.pending); equal(ns.pending.budget.reserved,protected)
+    ns.ConfirmPurchase(); equal(executions,1)
+end)
+test('manual expense tooltips describe the due level cost and expense selection',function()
+    reset(); local g=goal(); g.planMode='items'
+    g.expenses={{key='manual:repair',source='manual',name='Repairs',level=30,copper=10000,selected=true}}
+    ns.OpenExpensePlanner(g,function() end)
+    local button=additionalExpenseNamed('Repairs'); button.scripts.OnEnter(button)
+    local text=table.concat(GameTooltip.lines,'\n')
+    assert(text:find('Due at level 30',1,true)); assert(text:find('Expense cost:',1,true))
+    assert(text:find('Included - click to exclude expense',1,true))
+    assert(not text:find('rank',1,true)); assert(not text:find('ability',1,true))
+end)
+test('turning off tracking explicitly releases savings and restarting does not restore them',function()
+    reset(); ns.UsePreset('mount-first'); ns.db.goals[1].savedCopper=20000; ns.RefreshUI()
+    ns.ui.active.scripts.OnEnter(ns.ui.active)
+    local hint=table.concat(GameTooltip.lines,'\n')
+    assert(hint:find('starts funding from zero',1,true)); assert(hint:find('does not restore',1,true))
+    ns.ui.active:SetChecked(false); ns.ui.active.scripts.OnClick()
+    equal(ns.db.goals[1].savedCopper,0); equal(money,48705)
+    equal(ns.ui.progress.text,'Not tracked - savings allocation released')
+    ns.ui.levelGoal.scripts.OnEnter(ns.ui.levelGoal)
+    assert(not table.concat(GameTooltip.lines,'\n'):find('paused',1,true))
+    ns.ui.active:SetChecked(true); ns.ui.active.scripts.OnClick()
+    equal(ns.db.goals[1].savedCopper,0); equal(money,48705)
+end)
+test('collapsing tips saves the compact layout while retaining navigation and full hover text',function()
+    reset(); ns.UsePreset('mount-first'); local index=ns.ui.goldTipIndex
+    local before=copyData(ns.db.goals); equal(ns.ui.height,548)
+    ns.ui.goldTipToggle.scripts.OnClick(); equal(ns.db.tipsCollapsed,true)
+    equal(ns.ui.height,468); equal(ns.ui.goldTipText:IsShown(),false); equal(ns.ui.goldTipToggle.text,'+')
+    equal(ns.ui.goldTipIndex,index); ns.ui.goldTipNext.scripts.OnClick()
+    equal(ns.ui.goldTipCount.text,'2/3'); equal(ns.ui.height,468)
+    ns.ui.goldTips.scripts.OnEnter(ns.ui.goldTips); equal(GameTooltip.text,'Swiftthistle from Briarthorn and Mageroyal')
+    click(ns.ui,'Settings'); back(); equal(ns.ui.height,468)
+    ns.CloseUI(); ns.ToggleUI(); equal(ns.ui.goldTipCount.text,'3/3'); equal(ns.ui.height,468)
+    local previousGlobal=GoldEnvelopeDB; GoldEnvelopeDB=copyData(ns.db)
+    eventFrame.scripts.OnEvent(nil,'ADDON_LOADED','GoldEnvelope')
+    equal(ns.db.tipsCollapsed,true); equal(ns.ui.height,468); sameData(ns.db.goals,before)
+    ns.ui.goldTipToggle.scripts.OnClick(); equal(ns.db.tipsCollapsed,false)
+    equal(ns.ui.height,548); equal(ns.ui.goldTipText:IsShown(),true)
+    GoldEnvelopeDB=previousGlobal
+end)
+test('single goals show progress once while multiple goals retain aggregate totals',function()
+    reset(); ns.UsePreset('mount-first')
+    assert(not ns.ui.summary.text:find('\nSaved ',1,true)); assert(ns.ui.progress.text:find('/ ',1,true))
+    equal(ns.ui.editor.point[3],-70)
+    ns.UsePreset('mount-epic'); assert(ns.ui.summary.text:find('\nSaved ',1,true))
+    equal(ns.ui.editor.point[3],-82); equal(ns.ui.height,560)
+    ns.ui.delete.scripts.OnClick(); assert(not ns.ui.summary.text:find('\nSaved ',1,true))
+    equal(ns.ui.editor.point[3],-70); equal(ns.ui.height,548)
+end)
+test('removed curves migrate before validation while amounts savings and deadlines stay intact',function()
+    reset(); local previousGlobal=GoldEnvelopeDB
+    local a,b,c=goal(),goal(),goal()
+    a.name,a.curve,a.savedCopper='Old light start',3,10000
+    b.name,b.curve,b.savedCopper='Old late push',4,20000
+    c.name,c.goalType,c.curve,c.savedCopper='Old time curve','played',4,5000
+    c.startPlayed,c.durationSeconds=0,36000
+    ns.db.goals={a,b,c}; GoldEnvelopeDB=copyData(ns.db)
+    eventFrame.scripts.OnEvent(nil,'ADDON_LOADED','GoldEnvelope')
+    ns.sessionStarted=false; eventFrame.scripts.OnEvent(nil,'PLAYER_LOGIN')
+    equal(#ns.db.goals,3)
+    for index,g in ipairs(ns.db.goals) do
+        local original=({a,b,c})[index]
+        equal(g.curve,2); equal(g.name,original.name); equal(g.targetCopper,original.targetCopper)
+        equal(g.savedCopper,original.savedCopper); equal(g.targetLevel,original.targetLevel); assert(M.ValidateGoal(g))
+    end
+    equal(ns.db.goals[3].durationSeconds,36000); equal(ns.db.goals[3].startPlayed,0)
+    equal(M.CURVES[3],nil); equal(M.CURVES[4],nil)
+    GoldEnvelopeDB=previousGlobal
+end)
+test('time goals cycle only between steady saving and save more later',function()
+    reset(); ns.UsePreset('mount-first'); ns.ui.basis.scripts.OnClick()
+    equal(ns.ui.curve.text,'Steady saving')
+    ns.ui.curve.scripts.OnClick(); equal(ns.ui.curve.text,'Save more later')
+    ns.ui.curve.scripts.OnClick(); equal(ns.ui.curve.text,'Steady saving')
 end)
 
 print(tests .. ' tests passed')

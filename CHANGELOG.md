@@ -6,6 +6,25 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 No changes queued yet.
 
+## 0.4.15 - 2026-10-14
+
+- Keep an itemized mount's allowance separate from its observed riding fee.
+  The first known quote preserves the entered combined budget; later fee
+  updates no longer erase or change the mount allowance.
+- Allow unchanged spending warnings to be confirmed once after background
+  refreshes, while rechecking price, affordability, and protected spending.
+- Give manual expenses due-level and expense-selection tooltips. Explain that
+  disabling goal tracking releases its allocation and restarting funds from zero.
+- Add a saved collapse/expand control for gold tips and shrink the main window
+  when collapsed. Show aggregate progress only when multiple goals exist.
+- Offer Income-based, Steady saving, and Save more later curves. Migrate Light
+  start and Late push goals to Save more later while retaining their saved
+  allocations, amounts, deadlines, and valid checkpoints.
+
+## 0.4.14 - 2026-10-14
+
+- Use "sellable" in the Wetlands gold-making tip for clearer wording.
+
 ## 0.4.13 - 2026-10-14
 
 - Advance to the next gold-making tip in your level bracket each time the

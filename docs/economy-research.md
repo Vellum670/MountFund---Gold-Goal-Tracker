@@ -1,7 +1,7 @@
 # Economy research and budgeting assumptions
 
 Research date: October 14, 2026. Economy model introduced in version 0.3.0;
-UI, selection, and scheduling notes updated for version 0.4.1.
+UI, selection, and scheduling notes updated for version 0.4.15.
 
 ## What can be supported by the evidence
 
@@ -124,12 +124,15 @@ budget has room. Training may use its own budget without consuming goal savings.
 Actual saved allocations plus funded training can never exceed the wallet.
 Expected savings are a separate comparison target. When spending consumes goal
 money, recorded savings decrease. A deficit does not invent additional coins.
-Paused allocations are released. Old planned reserves migrate without being
+Turning off tracking releases the allocation; turning it back on funds from zero.
+Old planned reserves migrate without being
 credited as historical income.
 
 The native [Forever TradeFrame XML](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_UIPanels_Game/Mainline/TradeFrame.xml)
-specifies 344 × 446 UI units. Gold Envelope's main frame now uses 400 × 450,
-with menus as pages of that same frame. Short lists, presets, settings, training,
+specifies 344 × 446 UI units. Gold Envelope's main frame is 400 units wide and
+468 units tall for one goal with tips collapsed, or 548 with tips expanded.
+Multiple goals add a 12-unit totals row. Menus remain pages of that same frame.
+Short lists, presets, settings, training,
 expense grids, and savings plans use smaller heights. Automated tests check
 dimensions and interactions; visual fit and real game API behavior still need
 client validation.
@@ -137,8 +140,10 @@ client validation.
 ## Calendar and play-time goals
 
 Time goals schedule the remaining goal amount across elapsed calendar time or
-hours logged into the character. They default to steady saving; the other named
-custom curves can defer more of the target toward the deadline. The quest-income
+hours logged into the character. They default to steady saving; Save more later
+can defer more of the target toward the deadline. Older Light start and Late push
+goals migrate to Save more later without changing their amounts or deadlines.
+The quest-income
 weights apply only to level goals, since the addon has no evidence for how fast
 a particular player will earn gold per hour.
 

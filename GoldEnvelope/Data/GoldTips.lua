@@ -13,7 +13,7 @@ ns.GoldTipBrackets = {
         {title="Deviate Fish from Barrens oases",text="Fish the oasis waters. Compare selling raw fish with cooking Savory Deviate Delight if you have the recipe."},
     }},
     {min=21,max=30,label="Levels 21–30",tips={
-        {title="Thelgen Rock spiders in Wetlands",text="Farm Spider's Silk and Large Venom Sacs: two saleable materials from the same enemies."},
+        {title="Thelgen Rock spiders in Wetlands",text="Farm Spider's Silk and Large Venom Sacs: two sellable materials from the same enemies."},
         {title="Swiftthistle from Briarthorn and Mageroyal",text="Gather in Hillsbrad or the Barrens. Swiftthistle supplies Thistle Tea and Swiftness Potions."},
         {title="Oily Blackmouth from coastal schools",text="Try Ratchet or Wetlands. The fish supply Blackmouth Oil for consumables, including Free Action Potions."},
     }},

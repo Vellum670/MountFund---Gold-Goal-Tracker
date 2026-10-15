@@ -23,7 +23,7 @@ function ns.AskGoalPlanning(goal,onYes,onNo)
     end
     local page=ns.planningConsent; page.yes,page.no=onYes,onNo
     page.body:SetText("Choose individual purchases for " .. (goal.name~="" and goal.name or "this goal")
-        .. "?\n\nClick ability icons to include or exclude them, or keep one savings amount.")
+        .. "?\n\nClick expense icons to include or exclude purchases, or keep one savings amount.")
     ns.ShowPage("planning")
 end
 local function changed(page)
@@ -74,10 +74,13 @@ local function showTooltip(button)
     if item.spellID then GameTooltip:SetSpellByID(item.spellID,false,false,true)
     elseif item.link then GameTooltip:SetHyperlink(item.link) else GameTooltip:SetText(item.name) end
     GameTooltip:AddLine(" ")
-    GameTooltip:AddLine(button.maxed and "Max - no further rank upgrades" or "Next rank: level " .. button.requiredLevel,1,0.82,0)
-    GameTooltip:AddLine("Cost through level " .. page.goal.targetLevel .. ": " .. ns.MoneyText(button.cost)
-        .. (button.unknown and " (some prices unknown)" or ""),1,1,1)
-    GameTooltip:AddLine(button.included and "Included - click to exclude ability" or "Excluded - click to include ability",1,0.82,0)
+    local ability=item.source=="class" or item.source=="profession"
+    GameTooltip:AddLine(ability and (button.maxed and "Max - no further rank upgrades" or "Next rank: level " .. button.requiredLevel)
+        or "Due at level " .. button.requiredLevel,1,0.82,0)
+    GameTooltip:AddLine((ability and "Cost through level " .. page.goal.targetLevel or "Expense cost") .. ": " .. ns.MoneyText(button.cost)
+        .. (button.unknown and (ability and " (some prices unknown)" or " (price unknown)") or ""),1,1,1)
+    local noun=ability and "ability" or "expense"
+    GameTooltip:AddLine((button.included and "Included - click to exclude " or "Excluded - click to include ") .. noun,1,0.82,0)
     if button.blocked then GameTooltip:AddLine("Some ranks need a quest, talent, or race prerequisite before their costs count.",0.7,0.7,0.7,true) end
     if item.priceSource then GameTooltip:AddLine(item.priceSource,0.6,0.6,0.6) end
     GameTooltip:Show()

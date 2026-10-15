@@ -111,6 +111,7 @@ function ns.BuildLevelUpSummary(level)
 end
 
 function ns.PrepareGoal(goal, replacing)
+    ns.Model.MigrateCurve(goal)
     if goal.goalType=="date" and not goal.startTime then goal.startTime=ns.Now() end
     if goal.goalType=="played" and not goal.startPlayed then goal.startPlayed=math.floor(ns.GetPlayedSeconds()) end
     if not goal.startLevel then goal.startLevel = math.max(1, ns.GetPlayerLevel()) end
@@ -184,7 +185,7 @@ function ns.RequestPurchase(read, execute)
         ns.TrainingRunway(nil, nil, ns.db.goals, level), action.classTraining)
     if not budget.affordable then ns.Print("You do not have enough money for this purchase."); return end
     if ns.db.warnings and budget.warning and ns.WarningCooldownRemaining() == 0 then
-        ns.pending = { read = read, execute = execute, action = action, budget = budget, revision = ns.revision }
+        ns.pending = { read = read, execute = execute, action = action, budget = budget }
         ns.ShowWarning(ns.pending)
         return
     end
@@ -204,8 +205,10 @@ function ns.ConfirmPurchase()
     local budget = ns.Model.Purchase(ns.db.goals, level, GetMoney(), action.cost,
         ns.TrainingRunway(nil, nil, ns.db.goals, level), action.classTraining)
     if not budget.affordable then ns.Print("You no longer have enough money for this purchase."); return end
+    -- Display refreshes do not change what the player is approving. Reconfirm
+    -- only when the actual wallet or protected spending impact has changed.
     if budget.warning and (budget.balance ~= pending.budget.balance
-        or budget.reserved ~= pending.budget.reserved or pending.revision ~= ns.revision) then
+        or budget.reserved ~= pending.budget.reserved or budget.afterShortfall ~= pending.budget.afterShortfall) then
         ns.RequestPurchase(pending.read, pending.execute)
         return
     end
@@ -252,6 +255,7 @@ local function Initialize()
     ns.db.goals = type(ns.db.goals) == "table" and ns.db.goals or {}
     local valid = {}
     for _, goal in ipairs(ns.db.goals) do
+        if type(goal)=="table" then ns.Model.MigrateCurve(goal) end
         if ns.Model.ValidateGoal(goal) then valid[#valid + 1] = goal end
     end
     if #valid ~= #ns.db.goals then ns.Print("Some saved goals were invalid and were skipped.") end

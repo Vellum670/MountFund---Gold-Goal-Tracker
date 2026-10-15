@@ -226,15 +226,24 @@ function ns.SyncExpenses(goal)
             expense.copper = quote.copper
         end
     end
-    -- A provisional mount budget becomes a real quote once observed.
+    -- Separate the entered combined budget when a riding price becomes known.
+    -- The first quote must not erase the mount allowance. Later quote changes
+    -- affect only riding, leaving the allowance at the player's budgeted value.
     if source == "mount-first" or source == "mount-epic" then
-        local hasQuote = false
+        local ridingCost
         for _, expense in ipairs(goal.expenses) do
-            if expense.source == source and not expense.estimated then hasQuote = true end
+            if expense.source == source and not expense.estimated and expense.copper~=nil then
+                ridingCost=math.max(ridingCost or 0,expense.copper)
+            end
         end
-        if hasQuote then
-            for index = #goal.expenses, 1, -1 do
-                if goal.expenses[index].estimated then table.remove(goal.expenses, index) end
+        if ridingCost then
+            for _,expense in ipairs(goal.expenses) do
+                if expense.key=="manual:initial" and expense.estimated then
+                    expense.name="Mount allowance"
+                    expense.copper=math.max(0,(expense.copper or 0)-ridingCost)
+                    expense.estimated=false
+                    expense.priceSource="mount allowance from your budget"
+                end
             end
         end
     end
@@ -247,17 +256,22 @@ function ns.SyncExpenses(goal)
 end
 
 function ns.EnableItemPlanning(goal)
+    local wasItemized=goal.planMode=="items"
     goal.planMode, goal.planDecision = "items", "items"
     if goal.presetID == "class-training" then goal.includeClassTraining = true end
     goal.expenses = goal.expenses or {}
-    local hasGoalExpense = false
+    local hasGoalExpense,hasInitial = false,false
     for _, expense in ipairs(goal.expenses) do
-        if expense.source ~= "class" then hasGoalExpense = true; break end
+        if expense.source ~= "class" then hasGoalExpense = true end
+        if expense.key=="manual:initial" then hasInitial=true end
     end
-    if not hasGoalExpense and goal.targetCopper > 0 and goal.presetID ~= "class-training" then
+    local mount=goal.presetID=="mount-first" or goal.presetID=="mount-epic"
+    -- Riding quotes may already be present before itemizing a mount goal.
+    -- Carry the entered total across instead of replacing it with those quotes.
+    if not hasInitial and (not hasGoalExpense or (mount and not wasItemized)) and goal.targetCopper > 0 and goal.presetID ~= "class-training" then
         goal.expenses[#goal.expenses + 1] = { key = "manual:initial", name = goal.name ~= "" and goal.name or "Goal expense",
             level = goal.targetLevel, copper = goal.targetCopper, selected = true,
-            estimated = goal.presetID == "mount-first" or goal.presetID == "mount-epic", source = "manual" }
+            estimated = mount, source = "manual" }
     end
     ns.SyncExpenses(goal)
 end

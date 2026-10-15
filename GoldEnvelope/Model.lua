@@ -8,9 +8,11 @@ Model.CURVES = {
     [0]={name="Income-based",description="Save more as earnings rise with your level."},
     [1]={name="Steady saving",description="Add the same amount throughout the goal."},
     [2]={name="Save more later",description="Start gently and increase saving toward the deadline."},
-    [3]={name="Light start",description="Keep early saving small, with more to add later."},
-    [4]={name="Late push",description="Put most saving near the end of the goal."},
 }
+
+function Model.MigrateCurve(goal)
+    if goal.curve==3 or goal.curve==4 then goal.curve=2 end
+end
 
 function Model.IsTimeGoal(goal)
     return goal.goalType=="date" or goal.goalType=="played"
@@ -105,7 +107,7 @@ function Model.ValidateGoal(goal)
     if not integer(goal.targetCopper, (goal.planMode == "items" or goal.includeClassTraining) and 0 or 1, Model.MAX_COPPER) then
         return nil, "Set a positive savings amount."
     end
-    if not integer(goal.curve, 0, 4) then return nil, "Choose an income-based or custom savings curve." end
+    if not integer(goal.curve, 0, 2) then return nil, "Choose an income-based or custom savings curve." end
     if goal.startLevel and not integer(goal.startLevel, 1, Model.MAX_LEVEL) then return nil, "Invalid start level." end
     if goal.initialCopper and not integer(goal.initialCopper, 0, Model.MAX_COPPER) then return nil, "Invalid initial investment." end
     if goal.savedCopper and not integer(goal.savedCopper, 0, Model.MAX_COPPER) then return nil, "Invalid saved balance." end
