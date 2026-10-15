@@ -6,6 +6,19 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 No changes queued yet.
 
+## 1.1.2 - 2026-10-15
+
+- Show upcoming included spells and abilities with their ranks and costs when
+  hovering Class Training in the main-page preview. Group them by required
+  level within the character's next two levels.
+
+## 1.1.1 - 2026-10-15
+
+- Keep overview text visible on hover with a subtle tint beneath the text.
+- Label upcoming class training using actual upgrades after the character's
+  level through the next two levels. Show current and overdue training costs
+  separately while retaining their protected funding.
+
 ## 1.1.0 - 2026-10-15
 
 - Update the addon version to 1.1.0.

@@ -116,7 +116,8 @@ function ns.BuildGoalStatus(real, levelOverride)
     for index, goal in ipairs(source) do goals[index] = ns.Model.CopyGoal(goal) end
     ns.SyncStatusIntervals(goals, level)
     ns.Model.Reconcile(goals, balance)
-    local training, complete, nextLevel = ns.TrainingRunway(nil, nil, goals, level)
+    local training, complete, nextLevel, costs = ns.TrainingRunway(nil, nil, goals, level)
+    costs = costs or {current = 0, upcoming = 0, currentComplete = true, upcomingComplete = true}
     local budget = ns.Model.Budget(goals, level, balance, training)
     local sections = {
         {kind = "level", title = "LEVEL GOALS • Level " .. level, label = "Goal for this level", rows = {}, saved = 0, target = 0},
@@ -127,6 +128,7 @@ function ns.BuildGoalStatus(real, levelOverride)
     for _, section in ipairs(sections) do byKind[section.kind] = section end
     local status = {level = level, balance = balance, sections = sections, untracked = {},
         training = training, trainingComplete = complete, trainingLevel = nextLevel,
+        trainingCosts = costs,
         trainingFunded = budget.trainingFunded, budget = budget, count = #goals, activeCount = 0}
     for index, goal in ipairs(goals) do
         local progress = ns.Model.GoalProgress(goal, level)
@@ -148,16 +150,26 @@ function ns.BuildGoalStatus(real, levelOverride)
     return status
 end
 
+function ns.TrainingCaption(status)
+    local first, last = status.trainingLevel, status.trainingCosts.lastLevel
+    local levels = first and (last and last > first and first .. "–" .. last or tostring(first))
+    return levels and "Lvl " .. levels .. " Class Training" or "Class Training"
+end
+
 function ns.PrintStatus(real, levelOverride)
     if real then ns.SyncStatusIntervals(ns.db.goals, levelOverride or UnitLevel("player")) end
     local status = ns.BuildGoalStatus(real, levelOverride)
     local function line(text) DEFAULT_CHAT_FRAME:AddMessage(text) end
     line("|cffffd36eGold Envelope • Goal summary|r")
     line("  " .. (not real and ns.testMoneyCopper ~= nil and "Test wallet: " or "Wallet: ") .. ns.StatusCoins(status.balance))
-    if status.training > 0 or not status.trainingComplete then
-        line("  " .. (status.trainingLevel and "Lvl " .. status.trainingLevel .. " " or "")
-            .. "Class Training: " .. ns.StatusCoins(status.training)
-            .. (status.trainingComplete and "" or " (some prices unknown)"))
+    local costs = status.trainingCosts
+    if costs.current > 0 or not costs.currentComplete then
+        line("  Training due now: " .. ns.StatusCoins(costs.current)
+            .. (costs.currentComplete and "" or " (some prices unknown)"))
+    end
+    if status.trainingLevel then
+        line("  " .. ns.TrainingCaption(status) .. ": " .. ns.StatusCoins(costs.upcoming)
+            .. (costs.upcomingComplete and "" or " (some prices unknown)"))
     end
     for _, section in ipairs(status.sections) do
         if #section.rows > 0 then

@@ -24,7 +24,11 @@ The main page starts with **All goals**, an overview with **Saved** and **Target
 columns. Goals are grouped by level, calendar date, and play time. Each group
 shows its combined savings added this interval against its scheduled addition,
 using the same values as `/ge status`. Shared class training appears once with
-its funded amount and upcoming cost; `?` marks unknown prices. Untracked goals
+its funded amount and upcoming cost. Its level label follows included upgrades
+after your current level through the next two levels; current and overdue costs
+appear separately as **Training due now**. Hover upcoming Class Training to see
+included spell and ability names, ranks, required levels, and costs. `?` marks
+unknown prices. Untracked goals
 remain visible separately and do not contribute to group totals.
 
 Click **− / + All goals** to collapse or expand the overview. This preference

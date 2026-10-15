@@ -220,15 +220,36 @@ function ns.TrainingRunway(goal, force, goals, levelOverride)
     end
     if not enabled then return 0, true end
     local amount, complete, nextLevel = 0, true, nil
+    local costs = {current = 0, upcoming = 0, currentComplete = true, upcomingComplete = true, upcomingSpells = {}}
     for _, entry in ipairs(ns.ClassCatalog()) do
         local pastDue = entry.priceSource == "trainer quote" and entry.level < level
         if not entry.paid and entry.eligible and (entry.level >= level or pastDue) and entry.level <= math.min(60,level+2)
             and (selected[entry.key] ~= false) then
-            if not nextLevel or entry.level<nextLevel then nextLevel=entry.level end
-            if entry.copper then amount = amount + entry.copper else complete = false end
+            local upcoming = entry.level > level
+            if upcoming then
+                nextLevel = math.min(nextLevel or entry.level, entry.level)
+                costs.lastLevel = math.max(costs.lastLevel or entry.level, entry.level)
+                costs.upcomingSpells[#costs.upcomingSpells + 1] = {
+                    name = entry.name, rank = entry.rank, level = entry.level,
+                    copper = entry.copper, key = entry.key,
+                }
+            end
+            local bucket = upcoming and "upcoming" or "current"
+            if entry.copper then
+                amount = amount + entry.copper
+                costs[bucket] = costs[bucket] + entry.copper
+            else
+                complete = false
+                costs[bucket .. "Complete"] = false
+            end
         end
     end
-    return amount, complete, nextLevel
+    table.sort(costs.upcomingSpells, function(a, b)
+        if a.level ~= b.level then return a.level < b.level end
+        if a.name ~= b.name then return a.name < b.name end
+        return a.key < b.key
+    end)
+    return amount, complete, nextLevel, costs
 end
 
 function ns.SyncExpenses(goal)

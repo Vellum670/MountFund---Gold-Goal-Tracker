@@ -482,7 +482,12 @@ local function refreshGoalOverview(status)
             row.background = row:CreateTexture(nil, "BACKGROUND")
             row.background:SetAllPoints()
             row.name, row.saved, row.target = overviewColumns(row, -3, "GameFontHighlightSmall")
-            row:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "BLEND")
+            -- A highlight draw layer can cover font strings on this client.
+            -- Use a faint solid tint below text instead of an opaque button asset.
+            row.hoverTint = row:CreateTexture(nil, "BACKGROUND", nil, 1)
+            row.hoverTint:SetAllPoints()
+            row.hoverTint:SetColorTexture(1, 0.82, 0.2, 0.08)
+            row.hoverTint:Hide()
             overview.rows[count] = row
         end
         row.kind, row.goalIndex = kind, goal and goal.index or nil
@@ -503,17 +508,42 @@ local function refreshGoalOverview(status)
             ns.ShowMainPage()
         end or nil)
         tooltip(row, caption, detail)
+        local showDetails = row:GetScript("OnEnter")
+        row:SetScript("OnEnter", function(self)
+            self.hoverTint:Show()
+            showDetails(self)
+        end)
+        row:SetScript("OnLeave", function(self) self.hoverTint:Hide(); GameTooltip:Hide() end)
         row:Show()
         y = y + row:GetHeight()
         return row
     end
 
-    if status.training > 0 or not status.trainingComplete then
-        local trainingRow = render("training", (status.trainingLevel and "Lvl " .. status.trainingLevel .. " " or "") .. "Class training",
-            status.trainingFunded, status.training,
-            "Shared class training for the current and next two levels. Saved is the amount funded outside your goal allocations; Target is the included training cost."
-                .. (not status.trainingComplete and " Some prices are unknown." or ""))
-        if not status.trainingComplete then trainingRow.target:SetText(ns.MoneyText(status.training) .. " ?") end
+    local costs = status.trainingCosts
+    local currentFunded = math.min(status.trainingFunded, costs.current)
+    if costs.current > 0 or not costs.currentComplete then
+        local row = render("trainingDue", "Training due now", currentFunded, costs.current,
+            "Unlearned training due at your current level or earlier observed trainer ranks. These costs stay protected, separately from upcoming upgrades."
+                .. (not costs.currentComplete and " Some prices are unknown." or ""))
+        if not costs.currentComplete then row.target:SetText(ns.MoneyText(costs.current) .. " ?") end
+        y = y + 4
+    end
+    if status.trainingLevel then
+        local funded = math.min(costs.upcoming, math.max(0, status.trainingFunded - currentFunded))
+        local details = {"Upcoming included training within your next two levels:"}
+        local shownLevel
+        for _, spell in ipairs(costs.upcomingSpells or {}) do
+            if shownLevel ~= spell.level then
+                details[#details + 1] = "\nLevel " .. spell.level
+                shownLevel = spell.level
+            end
+            local rank = spell.rank and spell.rank ~= "" and " (" .. spell.rank .. ")" or ""
+            details[#details + 1] = spell.name .. rank .. " - "
+                .. (spell.copper ~= nil and ns.MoneyText(spell.copper) or "Unknown price")
+        end
+        details[#details + 1] = "\nSaved is funded training money; Target is the upcoming cost. Current and overdue costs appear separately."
+        local row = render("training", ns.TrainingCaption(status), funded, costs.upcoming, table.concat(details, "\n"))
+        if not costs.upcomingComplete then row.target:SetText(ns.MoneyText(costs.upcoming) .. " ?") end
         y = y + 4
     end
     for _, section in ipairs(status.sections) do
