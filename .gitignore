@@ -1,1 +1,5 @@
 /dist/
+/.dev/
+/AGENTS.md
+__pycache__/
+*.py[cod]

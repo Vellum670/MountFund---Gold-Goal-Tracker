@@ -1,3 +1,4 @@
+-- Build class rank snapshots and merge trainer observations into expense plans.
 local _, ns = ...
 local Model = ns.Model
 
@@ -53,6 +54,30 @@ function ns.ClassCatalog()
     local raceID
     if UnitRace then local _, _, id = UnitRace("player"); raceID = id end
     local rows, matched = {}, {}
+    local bySpell, byName = {}, {}
+    local function newest(a, b)
+        local at = Model.IsInteger(a.observedAt, 0, Model.MAX_COPPER) and a.observedAt or 0
+        local bt = Model.IsInteger(b.observedAt, 0, Model.MAX_COPPER) and b.observedAt or 0
+        if at ~= bt then return at > bt end
+        return a.key < b.key
+    end
+    -- Index once per snapshot. Exact spell IDs win over legacy name matches;
+    -- duplicate observations identify one rank, never another expense.
+    for key, quote in pairs(ns.db.trainerCatalog or {}) do
+        if type(key) == "string" and Model.ValidateExpense(quote, false)
+            and quote.source == "class" and quote.class == class then
+            local entry = {}
+            for field, value in pairs(quote) do entry[field] = value end
+            entry.key = key
+            local index = entry.spellID and bySpell or byName
+            local identity = entry.spellID or (entry.name .. ":" .. entry.level)
+            index[identity] = index[identity] or {}
+            index[identity][#index[identity] + 1] = entry
+        end
+    end
+    for _, index in ipairs({bySpell, byName}) do
+        for _, candidates in pairs(index) do table.sort(candidates, newest) end
+    end
     local prerequisites,knownAbilities={},{}
     for _,base in ipairs(ns.ClassTrainingData[class] or {}) do
         if base.requiresSpell then prerequisites[base.name]=base.requiresSpell end
@@ -71,27 +96,52 @@ function ns.ClassCatalog()
             for _, id in ipairs(base.races) do if id == raceID then eligibleRace = true end end
             entry.eligible = entry.eligible and eligibleRace
         end
-        for key, quote in pairs(ns.db.trainerCatalog or {}) do
-            if quote.source == "class" and quote.class == class
-                and (quote.spellID == base.spellID or (not quote.spellID and quote.name == entry.name and quote.level == base.level
-                    and (quote.rank == base.rank or not quote.rank or quote.rank == ""))) then
-                entry.copper, entry.paid, entry.priceSource = quote.copper, quote.paid or entry.paid, "trainer quote"
-                entry.observedAt, entry.trainer = quote.observedAt, quote.trainer
-                entry.icon, entry.link = quote.icon, quote.link
-                matched[key] = true
-                break
+        local quote
+        for _, candidate in ipairs(bySpell[base.spellID] or {}) do
+            matched[candidate.key] = true
+            quote = quote or candidate
+        end
+        for _, candidate in ipairs(byName[entry.name .. ":" .. base.level] or {}) do
+            if candidate.rank == base.rank or not candidate.rank or candidate.rank == "" then
+                matched[candidate.key] = true
+                quote = quote or candidate
             end
+        end
+        if quote then
+            entry.copper, entry.paid, entry.priceSource = quote.copper, quote.paid or entry.paid, "trainer quote"
+            entry.observedAt, entry.trainer = quote.observedAt, quote.trainer
+            entry.icon, entry.link = quote.icon, quote.link
         end
         entry.icon = ns.ExpenseIcon(entry)
         rows[#rows + 1] = entry
     end
-    for key, quote in pairs(ns.db.trainerCatalog or {}) do
-        if quote.source == "class" and quote.class == class and not matched[key] then
-            local entry = {}
-            for field, value in pairs(quote) do entry[field] = value end
-            entry.key, entry.eligible, entry.priceSource = key, true, "trainer quote"
-            entry.icon = ns.ExpenseIcon(entry)
-            rows[#rows + 1] = entry
+    local observedNames = {}
+    local function identity(quote)
+        return quote.name .. ":" .. quote.level .. ":" .. (quote.rank or "")
+    end
+    local function addObserved(quote)
+        local entry = {}
+        for field, value in pairs(quote) do entry[field] = value end
+        entry.eligible, entry.priceSource = true, "trainer quote"
+        entry.paid = entry.paid or known(entry.spellID)
+        entry.icon = ns.ExpenseIcon(entry)
+        rows[#rows + 1] = entry
+    end
+    for _, candidates in pairs(bySpell) do
+        local quote
+        for _, candidate in ipairs(candidates) do
+            observedNames[identity(candidate)] = true
+            if not matched[candidate.key] then quote = quote or candidate end
+        end
+        if quote then addObserved(quote) end
+    end
+    for _, candidates in pairs(byName) do
+        for _, quote in ipairs(candidates) do
+            local name = identity(quote)
+            if not matched[quote.key] and not observedNames[name] then
+                addObserved(quote)
+                observedNames[name] = true
+            end
         end
     end
     table.sort(rows, function(a,b) if a.level ~= b.level then return a.level < b.level end return a.key < b.key end)
@@ -169,15 +219,16 @@ function ns.TrainingRunway(goal, force, goals, levelOverride)
         if g.active and g.includeClassTraining then enabled = true; addSelections(g) end
     end
     if not enabled then return 0, true end
-    local amount, complete = 0, true
+    local amount, complete, nextLevel = 0, true, nil
     for _, entry in ipairs(ns.ClassCatalog()) do
         local pastDue = entry.priceSource == "trainer quote" and entry.level < level
         if not entry.paid and entry.eligible and (entry.level >= level or pastDue) and entry.level <= math.min(60,level+2)
             and (selected[entry.key] ~= false) then
+            if not nextLevel or entry.level<nextLevel then nextLevel=entry.level end
             if entry.copper then amount = amount + entry.copper else complete = false end
         end
     end
-    return amount, complete
+    return amount, complete, nextLevel
 end
 
 function ns.SyncExpenses(goal)

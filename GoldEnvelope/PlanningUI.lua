@@ -1,3 +1,4 @@
+-- Training and expense pages edit goal copies and commit through onChange.
 local _, ns = ...
 local UI,Model=ns.UI,ns.Model
 
@@ -180,7 +181,7 @@ local function saveManual(page)
     local name=page.expenseName:GetText():match("^%s*(.-)%s*$"); if name=="" then return end
     local level=tonumber(page.expenseLevel:GetText()); local amount,err=UI.GetCoins(page.expenseAmount)
     if not level or level~=math.floor(level) or level<1 or level>page.goal.targetLevel then err="Use a valid due level within this goal." end
-    if err then storeManualDraft(page); ns.ui.error:SetText(err); return end
+    if err then storeManualDraft(page); ns.ui.error:SetText(err); return false end
     local found
     for _,item in ipairs(page.goal.expenses) do
         if item.source=="manual" and (item.key==page.manualKey or (not page.manualKey and item.name==name and item.level==level)) then found=item; break end
@@ -192,7 +193,7 @@ local function saveManual(page)
     page.manualKey=found.key; found.name,found.level,found.copper,found.estimated=name,level,amount,false
     changed(page)
     if ns.testMoneyCopper~=nil then ns.testExpenseDraft=nil else ns.db.expenseDraft=nil end
-    ns.ui.error:SetText(""); ns.RefreshExpensePlanner()
+    ns.ui.error:SetText(""); ns.RefreshExpensePlanner(); return true
 end
 function ns.FlushExpenseFields()
     local page=ns.planningFrame
@@ -216,7 +217,9 @@ function ns.OpenExpensePlanner(goal,onChange,classOnly)
         UI.Label(page.manual,"Due level",290,-6,64,"GameFontNormalSmall")
         page.expenseAmount=UI.Coins(page.manual,6,-58)
         UI.Button(page.manual,"New cost",226,-58,128,function()
-            saveManual(page); page.manualKey=nil; page.expenseName:SetText(""); UI.SetCoins(page.expenseAmount,0)
+            -- Keep invalid input and its error visible until it is corrected.
+            if saveManual(page) == false then return end
+            page.manualKey=nil; page.expenseName:SetText(""); UI.SetCoins(page.expenseAmount,0)
         end)
         for _,field in ipairs({page.expenseName,page.expenseLevel,unpack(page.expenseAmount)}) do field:SetScript("OnEditFocusLost",function() saveManual(page) end) end
         page.manual:SetShown(not classOnly)

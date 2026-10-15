@@ -6,6 +6,55 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 No changes queued yet.
 
+## 0.4.23 - 2026-10-15
+
+- Add Report bug beside Close on the main page. Open a selectable GitHub issue
+  link in the same window for players to copy into their browser.
+- Preserve goal edits when opening the reporting page and support Back and
+  Escape navigation. Reports are written and submitted on GitHub.
+
+## 0.4.22 - 2026-10-15
+
+- Add a collapsible All goals overview to the main page with aligned Saved and
+  Target columns, coin icons, and shared class-training funding shown once.
+- Group goals by level, calendar date, and play time with combined interval
+  progress matching chat summaries. Show untracked goals separately.
+- Click overview rows to edit goals below; retain unfinished input and remember
+  collapse state. Scroll long lists within a bounded area and show full details
+  on hover.
+
+## 0.4.21 - 2026-10-15
+
+- Count duplicate trainer observations once and prefer the latest exact spell
+  quote over older name-based matches, keeping shared training totals stable.
+- Validate expense rows on simple and itemized goals. Ignore invalid saved
+  trainer quotes and recover malformed earnings counters without interrupting
+  normal character money updates.
+- Preserve invalid expense input when pressing New cost so it can be corrected.
+- Verify release downloads before replacing the previous ZIP.
+
+## 0.4.20 - 2026-10-15
+
+- Fix toast hover detection for its click-through window at different UI scales.
+  Hovering restores full visibility and holds the dismissal timer until the
+  cursor leaves, then resumes the six-second countdown.
+
+## 0.4.19 - 2026-10-15
+
+- Group chat summaries by level, calendar date, and play time, showing each
+  goal's savings and combined interval progress against scheduled additions.
+- Show shared class training once with its next included training level from
+  the class database. Shorten chat coin amounts and separate goal groups.
+- Report goal status on matching level, daily, and played-hour milestones,
+  plus login and reload. Zoning does not trigger reports.
+- Preserve interval savings across reloads; spending reduces reported progress.
+  Existing goals start interval tracking when this update first sees them.
+
+## 0.4.18 - 2026-10-15
+
+- Simplify the public repository to the addon, player guide, release notes,
+  and addon-only download. Retain the existing direct download links.
+
 ## 0.4.17 - 2026-10-14
 
 - Preserve unfinished goal input when editing another goal, and preserve the

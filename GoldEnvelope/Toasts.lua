@@ -1,3 +1,4 @@
+-- Session notifications animate display snapshots without changing saved progress.
 local _, ns = ...
 local UI = ns.UI
 local DISPLAY_SECONDS, FADE_IN, FADE_OUT = 6, 0.3, 0.8
@@ -77,6 +78,22 @@ local function showPending()
     frame:SetAlpha(0); frame:Show()
 end
 
+local function cursorOverToast(frame)
+    -- Use geometry rather than mouse focus: this toast passes clicks through,
+    -- so the client may report the frame underneath it as the hovered frame.
+    if GetCursorPosition then
+        local x,y=GetCursorPosition()
+        local scale=frame:GetEffectiveScale()
+        local left,right,bottom,top=frame:GetLeft(),frame:GetRight(),frame:GetBottom(),frame:GetTop()
+        if x and y and scale and scale>0 and left and right and bottom and top then
+            x,y=x/scale,y/scale
+            return x>=left and x<=right and y>=bottom and y<=top
+        end
+        return false
+    end
+    return MouseIsOver and MouseIsOver(frame) or false
+end
+
 local function onUpdate(frame)
     if ns.toastMoving then frame:SetAlpha(1); return end
     if inCombat() then
@@ -92,7 +109,7 @@ local function onUpdate(frame)
     if not frame.startedAt then return end
     local now=GetTime(); local age=now-frame.startedAt
     -- Poll cursor bounds so hovering does not require capturing mouse clicks.
-    local hovered=MouseIsOver and MouseIsOver(frame)
+    local hovered=cursorOverToast(frame)
     if hovered then frame.expiresAt=now+DISPLAY_SECONDS end
     local remaining=(frame.expiresAt or frame.startedAt+DISPLAY_SECONDS)-now
     if remaining<=0 then ns.HideLevelUpToast(); return end

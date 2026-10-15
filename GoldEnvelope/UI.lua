@@ -1,3 +1,4 @@
+-- Native pages and silent field persistence; draft input stays separate from goals.
 local _, ns = ...
 local Model = ns.Model
 local selected, draft = 1, nil
@@ -182,7 +183,8 @@ function ns.ShowPage(key,replace)
     ui.currentPage=key; page:Show()
     ui.back:SetShown(key~="main")
     ui.title:ClearAllPoints(); ui.title:SetPoint("TOPLEFT",key=="main" and 24 or 100,-22)
-    ui.title:SetWidth(key=="main" and 280 or 218); ui.title:SetText(page.pageTitle)
+    ui.title:SetWidth(key=="main" and 196 or 218); ui.title:SetText(page.pageTitle)
+    if ui.reportBug then ui.reportBug:SetShown(key == "main") end
     ui.error:SetText(""); ns.ResizePage(page.windowHeight); ui:Show()
 end
 function ns.ShowMainPage()
@@ -417,12 +419,154 @@ function ns.CatalogChanged()
     if draft then ns.SyncExpenses(draft); if draft.planMode=="items" then setCoins(ns.ui.amount,draft.targetCopper) end end
     ns.RefreshUI(); if ns.RefreshExpensePlanner then ns.RefreshExpensePlanner() end
 end
+local OVERVIEW_MAX_HEIGHT = 180
+
+local function overviewColumns(parent, y, font)
+    local name = label(parent, "", 0, y, 134, font)
+    local saved = label(parent, "", 142, y, 98, font)
+    local target = label(parent, "", 250, y, 100, font)
+    for _, region in ipairs({name, saved, target}) do
+        region:SetWordWrap(false)
+        region:SetHeight(16)
+    end
+    saved:SetJustifyH("RIGHT")
+    target:SetJustifyH("RIGHT")
+    return name, saved, target
+end
+
+local function createGoalOverview(main)
+    local ui = ns.ui
+    local overview = CreateFrame("Frame", nil, main)
+    ui.goalOverview = overview
+    overview:SetPoint("TOPLEFT", 0, -22)
+    overview:SetSize(368, 24)
+    overview.toggle = button(overview, "All goals", 0, 0, 368, function()
+        ns.SaveAllFields(true)
+        ns.db.goalOverviewCollapsed = not ns.db.goalOverviewCollapsed
+        ns.RefreshUI()
+    end)
+    tooltip(overview.toggle, "All goals", "Collapse or expand your goal summary. This choice is saved for this character.")
+    overview.body = CreateFrame("Frame", nil, overview)
+    overview.body:SetPoint("TOPLEFT", 0, -28)
+    overview.body:SetSize(368, 1)
+    overview.nameHeading, overview.savedHeading, overview.targetHeading = overviewColumns(overview.body, 0, "GameFontNormalSmall")
+    overview.nameHeading:SetText("Goal / interval")
+    overview.savedHeading:SetText("Saved")
+    overview.targetHeading:SetText("Target")
+    overview.scroll = CreateFrame("ScrollFrame", nil, overview.body, "UIPanelScrollFrameTemplate")
+    overview.scroll:SetPoint("TOPLEFT", 0, -22)
+    overview.scroll:SetSize(354, 1)
+    overview.content = CreateFrame("Frame", nil, overview.scroll)
+    overview.content:SetSize(350, 1)
+    overview.scroll:SetScrollChild(overview.content)
+    overview.rows = {}
+end
+
+local function refreshGoalOverview(status)
+    local overview = ns.ui.goalOverview
+    if not overview then return end
+    overview.status = status
+    local collapsed = ns.db.goalOverviewCollapsed == true
+    overview.toggle:SetText((collapsed and "+ " or "- ") .. "All goals (" .. status.count .. ")")
+    overview.body:SetShown(not collapsed)
+    for _, row in ipairs(overview.rows) do row:Hide() end
+    if collapsed then overview:SetHeight(24); return end
+
+    local count, y = 0, 0
+    local function render(kind, caption, saved, target, detail, goal)
+        count = count + 1
+        local row = overview.rows[count]
+        if not row then
+            row = CreateFrame("Button", nil, overview.content)
+            row:SetSize(350, 22)
+            row.background = row:CreateTexture(nil, "BACKGROUND")
+            row.background:SetAllPoints()
+            row.name, row.saved, row.target = overviewColumns(row, -3, "GameFontHighlightSmall")
+            row:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "BLEND")
+            overview.rows[count] = row
+        end
+        row.kind, row.goalIndex = kind, goal and goal.index or nil
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", 0, -y)
+        row:SetHeight(kind == "heading" and 20 or 22)
+        row.name:SetWidth((kind == "heading" or kind == "empty") and 350 or 134)
+        -- Keep section headings full width; numeric columns only appear on values.
+        row.name:SetText(caption)
+        row.name:SetTextColor((kind == "heading" or kind == "total") and 1 or 0.9, 0.82, kind == "heading" and 0.2 or 0.65)
+        row.saved:SetText(saved ~= nil and ns.MoneyText(saved) or "")
+        row.target:SetText(target ~= nil and ns.MoneyText(target) or "")
+        row.background:SetColorTexture(0.65, 0.48, 0.22, kind == "total" and 0.14 or (count % 2 == 0 and 0.04 or 0))
+        row:SetScript("OnClick", goal and function()
+            ns.SaveAllFields()
+            selected = goal.index
+            showEditor()
+            ns.ShowMainPage()
+        end or nil)
+        tooltip(row, caption, detail)
+        row:Show()
+        y = y + row:GetHeight()
+        return row
+    end
+
+    if status.training > 0 or not status.trainingComplete then
+        local trainingRow = render("training", (status.trainingLevel and "Lvl " .. status.trainingLevel .. " " or "") .. "Class training",
+            status.trainingFunded, status.training,
+            "Shared class training for the current and next two levels. Saved is the amount funded outside your goal allocations; Target is the included training cost."
+                .. (not status.trainingComplete and " Some prices are unknown." or ""))
+        if not status.trainingComplete then trainingRow.target:SetText(ns.MoneyText(status.training) .. " ?") end
+        y = y + 4
+    end
+    for _, section in ipairs(status.sections) do
+        if #section.rows > 0 then
+            render("heading", section.title, nil, nil, section.label .. " totals all tracked goals in this group.")
+            for _, goal in ipairs(section.rows) do
+                local deadline = goal.goalType == "date" and date("%Y-%m-%d", goal.deadlineTime)
+                    or goal.goalType == "played" and string.format("%.1f played hours", goal.durationSeconds / 3600)
+                    or "level " .. goal.targetLevel
+                render("goal", goal.name, goal.saved, goal.target,
+                    "Saved " .. ns.MoneyText(goal.saved) .. " / " .. ns.MoneyText(goal.target)
+                        .. "\nDue: " .. deadline .. "\n" .. (goal.behind > 0 and "Behind " or "Ahead ")
+                        .. ns.MoneyText(goal.behind > 0 and goal.behind or goal.ahead)
+                        .. ". Click to edit this goal.", goal)
+            end
+            render("total", section.label, section.saved, section.target,
+                "Net savings added during this interval: " .. ns.MoneyText(section.saved)
+                    .. "\nCombined scheduled addition: " .. ns.MoneyText(section.target)
+                    .. ". These totals include all tracked goals in this group. Initial investments are separate; spending savings reduces progress.")
+            y = y + 6
+        end
+    end
+    if #status.untracked > 0 then
+        render("heading", "NOT TRACKED", nil, nil, "These goals do not receive savings or count toward interval totals.")
+        for _, goal in ipairs(status.untracked) do
+            render("goal", goal.name, goal.saved, goal.target,
+                "Not tracked - savings allocation released. Target " .. ns.MoneyText(goal.target)
+                    .. ". Click to edit and enable tracking.", goal)
+        end
+    end
+    if status.count == 0 then
+        render("empty", "No goals yet. Create one below.", nil, nil, "Create a goal or choose a preset to begin saving.")
+    end
+    local contentHeight = math.max(1, y)
+    -- Bound the overview so the editor and tips remain reachable on small screens.
+    local screenHeight = UIParent:GetHeight() or 1080
+    local lowerHeight = ns.db.tipsCollapsed == true and 516 or 596
+    local availableHeight = math.max(44, screenHeight - lowerHeight - 40)
+    local viewportHeight = math.min(OVERVIEW_MAX_HEIGHT, availableHeight, contentHeight)
+    overview.content:SetHeight(contentHeight)
+    overview.scroll:SetHeight(viewportHeight)
+    local scroll = overview.scroll:GetVerticalScroll() or 0
+    overview.scroll:SetVerticalScroll(math.min(scroll, math.max(0, contentHeight - viewportHeight)))
+    overview.body:SetHeight(22 + viewportHeight)
+    overview:SetHeight(28 + overview.body:GetHeight())
+end
+
 local function layoutMainPage()
     local ui=ns.ui; if not ui or not ui.goldTipToggle then return end
-    local multiple=#ns.GetGoals()>1
-    local editorTop=multiple and 82 or 70
+    local navTop = 22 + ui.goalOverview:GetHeight() + 10
+    local editorTop = navTop + 36
     for _,item in ipairs(ui.mainNav) do
-        item.control:ClearAllPoints(); item.control:SetPoint("TOPLEFT",item.x,multiple and -43 or -31)
+        item.control:ClearAllPoints(); item.control:SetPoint("TOPLEFT",item.x,-navTop)
     end
     ui.editor:ClearAllPoints(); ui.editor:SetPoint("TOPLEFT",0,-editorTop)
     local tipsTop=editorTop+292
@@ -455,14 +599,13 @@ local function refreshGoldTips(step)
 end
 function ns.RefreshUI()
     if not ns.ui or not ns.db then return end
-    local ui=ns.ui; local budget=ns.GetBudget()
+    local ui=ns.ui
+    local status = ns.BuildGoalStatus()
+    local budget = status.budget
+    refreshGoalOverview(status)
     refreshGoldTips()
     local summary=(ns.testMoneyCopper~=nil and "Test wallet " or "Wallet ") .. ns.MoneyText(budget.balance)
         .. (ns.testPlayerLevel and "  [Test level " .. ns.testPlayerLevel .. "]" or "")
-    if #ns.GetGoals()>1 then
-        summary=summary .. "\nSaved " .. ns.MoneyText(budget.saved) .. "  |  " .. (budget.behind>0 and "Behind " or "Ahead ")
-            .. ns.MoneyText(budget.behind>0 and budget.behind or budget.ahead)
-    end
     ui.summary:SetText(summary)
     if draft then
         local saved=ns.GetGoals()[selected]; if saved then draft.savedCopper=saved.savedCopper end
@@ -534,6 +677,46 @@ refreshGoalList=function()
         picker.scroll:SetHeight(height); ns.ResizePage(55+height+50)
     end
 end
+-- WoW cannot submit web requests. Give players a selectable browser destination
+-- without adding a network dependency or collecting any character information.
+ns.BUG_REPORT_URL = "https://github.com/Vellum670/WoW-Forever-Addon/issues/new"
+
+function ns.OpenBugReport()
+    ns.EnsureUI()
+    local page = ns.ui.pages.bugreport
+    if not page then
+        page = makePage("bugreport", "Report a bug", 250)
+        local intro = label(page, "Copy this link into your browser to report a Gold Envelope bug on GitHub.",
+            0, 0, 368, "GameFontHighlightSmall")
+        intro:SetHeight(40)
+        intro:SetWordWrap(true)
+        label(page, "GitHub bug report link", 0, -55, 368, "GameFontNormalSmall")
+        page.link = edit(page, 6, -76, 356, ns.BUG_REPORT_URL)
+        page.link:SetMaxLetters(0)
+        page.link:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+        page.link:SetScript("OnMouseUp", function(self)
+            self:SetFocus()
+            self:HighlightText()
+        end)
+        -- Keep the destination intact while still allowing keyboard copying.
+        page.link:SetScript("OnTextChanged", function(self)
+            if self:GetText() ~= ns.BUG_REPORT_URL then
+                self:SetText(ns.BUG_REPORT_URL)
+                self:HighlightText()
+            end
+        end)
+        local help = label(page,
+            "Press Ctrl+C to copy, then paste into your browser. Sign in to GitHub, describe the problem and steps to reproduce, and submit the issue there.",
+            0, -115, 368, "GameFontHighlightSmall")
+        help:SetHeight(65)
+        help:SetWordWrap(true)
+        page:SetScript("OnHide", function() page.link:ClearFocus() end)
+    end
+    ns.ShowPage("bugreport")
+    page.link:SetFocus()
+    page.link:HighlightText()
+end
+
 local function settingsPage()
     if ns.ui.pages.settings then ns.ShowPage("settings"); return end
     local page=makePage("settings","Settings",310)
@@ -556,9 +739,12 @@ createUI=function()
     ui.pages,ui.history={},{}
     ui.error=label(ui,"",16,0,368,"GameFontHighlightSmall"); ui.error:ClearAllPoints(); ui.error:SetPoint("BOTTOMLEFT",16,12); ui.error:SetTextColor(1,0.65,0.35)
     button(ui,"Close",326,-14,60,ns.CloseUI)
+    ui.reportBug = button(ui, "Report bug", 226, -14, 92, ns.OpenBugReport)
+    tooltip(ui.reportBug, "Report a bug", "Copy the GitHub issue link to report a problem in your browser.")
     ui.back=button(ui,"Back",16,-14,70,ns.GoBack); ui.back:Hide()
     local main=makePage("main","Gold Envelope",560); main:SetHeight(482); main:Show(); ui.currentPage="main"
     ui.summary=label(main,"",0,0,368,"GameFontHighlightSmall")
+    createGoalOverview(main)
     ui.mainNav={
         {x=0,control=button(main,"Goals",0,-43,74,function() ns.ShowPage("goals") end)},
         {x=82,control=button(main,"New",82,-43,54,function() ns.SaveAllFields(); selected=#ns.GetGoals()+1; showEditor() end)},

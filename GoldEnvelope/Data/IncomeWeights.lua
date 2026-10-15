@@ -1,5 +1,6 @@
 -- Relative quest-cash/XP weights, Classic fallback; not expected wallet balances.
--- Derived from 3,571 non-repeatable quests. See docs/economy-research.md.
+-- Derived from 3,571 non-repeatable quests in CMaNGOS classic-db.
+-- Source snapshot: 22b51464f1625f6ef6275771de1f5466c6f5d19e.
 local _, ns = ...
 ns.IncomeWeights = { [1] = 0,
     [2] = 1,

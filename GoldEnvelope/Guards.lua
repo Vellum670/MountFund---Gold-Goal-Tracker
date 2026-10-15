@@ -1,3 +1,4 @@
+-- Idempotent UI wrappers defer supported purchases until savings checks pass.
 local _, ns = ...
 local scripts = setmetatable({}, { __mode = "k" })
 local splits = setmetatable({}, { __mode = "k" })

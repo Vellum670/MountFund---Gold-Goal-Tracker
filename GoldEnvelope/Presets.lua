@@ -1,8 +1,7 @@
 local _, ns = ...
 
 -- Starting budgets, not guaranteed trainer quotes. Keep them editable and opt-in.
--- Source context: https://www.wowhead.com/forever/spell=33388/apprentice-riding
--- https://www.warcrafttavern.com/forever/guides/riding/
+-- Mount amounts cover both riding and a mount; they are editable allowances.
 ns.Presets = {
     { id = "mount-first", name = "First mount & riding", targetLevel = 40,
         targetCopper = 100 * 10000, icon = "Interface\\Icons\\Ability_Mount_RidingHorse",

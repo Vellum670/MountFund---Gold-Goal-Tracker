@@ -1,5 +1,6 @@
 -- Factual spell/rank/level/base-price snapshot; no source addon code is included.
--- Provenance and limitations: docs/economy-research.md
+-- Facts: https://github.com/naowh-gaming/NaowhForever/blob/4b6241cf98299be96d029906b605873b103b1f87/Tools/data/training_cache.json
+-- Base price estimates; observed trainer prices take precedence.
 local _, ns = ...
 ns.ClassTrainingData = {
     WARRIOR = {

@@ -1,3 +1,4 @@
+-- Integer-copper budgeting, input validation, and deadline schedule calculations.
 local _, ns = ...
 local Model = {}
 ns.Model = Model
@@ -18,12 +19,12 @@ function Model.IsTimeGoal(goal)
     return goal.goalType=="date" or goal.goalType=="played"
 end
 
-function Model.ScheduleFraction(goal, level)
+function Model.ScheduleFraction(goal, level, now, played)
     local start,finish,current
     if goal.goalType=="date" then
-        start,finish,current=goal.startTime or 0,goal.deadlineTime or 0,ns.Now()
+        start,finish,current=goal.startTime or 0,goal.deadlineTime or 0,now or ns.Now()
     elseif goal.goalType=="played" then
-        start=goal.startPlayed or 0; finish=start+(goal.durationSeconds or 0); current=ns.GetPlayedSeconds()
+        start=goal.startPlayed or 0; finish=start+(goal.durationSeconds or 0); current=played or ns.GetPlayedSeconds()
     else
         start,finish,current=goal.startLevel or 1,goal.targetLevel,level
     end
@@ -38,6 +39,27 @@ end
 local function integer(value, minimum, maximum)
     return type(value) == "number" and value == math.floor(value)
         and value >= minimum and value <= maximum
+end
+
+Model.IsInteger = integer
+
+-- Validate every persisted expense, including rows on simple training goals.
+-- Trainer quotes may lack a key until they are normalized from their map key.
+function Model.ValidateExpense(expense, requireKey)
+    if type(expense) ~= "table"
+        or (requireKey ~= false and (type(expense.key) ~= "string" or expense.key == ""))
+        or type(expense.name) ~= "string" or not expense.name:match("%S")
+        or not integer(expense.level, 1, Model.MAX_LEVEL)
+        or (expense.copper ~= nil and not integer(expense.copper, 0, Model.MAX_COPPER))
+        or (expense.spellID ~= nil and not integer(expense.spellID, 1, Model.MAX_COPPER))
+        or (expense.rank ~= nil and type(expense.rank) ~= "string")
+        or (expense.source ~= nil and type(expense.source) ~= "string") then
+        return false
+    end
+    for _, field in ipairs({"selected", "paid", "eligible"}) do
+        if expense[field] ~= nil and type(expense[field]) ~= "boolean" then return false end
+    end
+    return true
 end
 
 function Model.ParseCoins(gold, silver, copper)
@@ -111,18 +133,27 @@ function Model.ValidateGoal(goal)
     if goal.startLevel and not integer(goal.startLevel, 1, Model.MAX_LEVEL) then return nil, "Invalid start level." end
     if goal.initialCopper and not integer(goal.initialCopper, 0, Model.MAX_COPPER) then return nil, "Invalid initial investment." end
     if goal.savedCopper and not integer(goal.savedCopper, 0, Model.MAX_COPPER) then return nil, "Invalid saved balance." end
-    if goal.planMode == "items" then
+    if goal.active ~= nil and type(goal.active) ~= "boolean" then return nil, "Invalid tracking setting." end
+    if goal.nextExpenseID ~= nil and not integer(goal.nextExpenseID, 0, Model.MAX_COPPER) then
+        return nil, "Invalid expense identifier."
+    end
+    if goal.statusIntervalBase ~= nil and not integer(goal.statusIntervalBase, 0, Model.MAX_COPPER) then
+        return nil, "Invalid interval savings."
+    end
+    if goal.expenses ~= nil then
         if type(goal.expenses) ~= "table" then return nil, "Invalid expense plan." end
-        local keys = {}
-        for _, expense in ipairs(goal.expenses) do
-            if type(expense) ~= "table" or type(expense.key) ~= "string" or keys[expense.key]
-                or type(expense.name) ~= "string" or not expense.name:match("%S")
-                or not integer(expense.level, 1, Model.MAX_LEVEL)
-                or (expense.copper ~= nil and not integer(expense.copper, 0, Model.MAX_COPPER)) then
+        local keys, count = {}, 0
+        for index, expense in pairs(goal.expenses) do
+            if not integer(index, 1, #goal.expenses) or not Model.ValidateExpense(expense)
+                or keys[expense.key] then
                 return nil, "Each expense needs a name, a unique key, a valid level and a whole coin amount."
             end
-            keys[expense.key] = true
+            keys[expense.key], count = true, count + 1
         end
+        if count ~= #goal.expenses then return nil, "Invalid expense plan." end
+    elseif goal.planMode == "items" then return nil, "Invalid expense plan." end
+    if goal.milestones ~= nil and type(goal.milestones) ~= "table" then return nil, "Invalid milestones." end
+    if goal.planMode == "items" then
         if Model.ExpenseTotal(goal) > Model.MAX_COPPER then return nil, "Total expense amount is too large." end
         return true
     end
@@ -166,10 +197,10 @@ function Model.Fraction(startLevel, endLevel, level, curve)
     return total > 0 and earned / total or 0
 end
 
-function Model.TargetAtLevel(goal, level)
+function Model.TargetAtLevel(goal, level, now, played)
     if Model.IsTimeGoal(goal) then
         local initial=math.min(goal.initialCopper or 0,goal.targetCopper)
-        local fraction=Model.ScheduleFraction(goal,level)^(goal.curve==0 and 1 or goal.curve)
+        local fraction=Model.ScheduleFraction(goal,level,now,played)^(goal.curve==0 and 1 or goal.curve)
         return math.floor(initial+(goal.targetCopper-initial)*fraction)
     end
     local start = goal.startLevel or 1

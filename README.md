@@ -20,7 +20,19 @@ the client after first installation, enable the addon, and enter `/envelope`.
 
 ## Savings goals
 
-Choose a goal from **Goals**, then edit its name, deadline, and amount. The
+The main page starts with **All goals**, an overview with **Saved** and **Target**
+columns. Goals are grouped by level, calendar date, and play time. Each group
+shows its combined savings added this interval against its scheduled addition,
+using the same values as `/ge status`. Shared class training appears once with
+its funded amount and upcoming cost; `?` marks unknown prices. Untracked goals
+remain visible separately and do not contribute to group totals.
+
+Click **− / + All goals** to collapse or expand the overview. This preference
+survives reload. Long lists scroll within the section; hover for full names,
+amounts, deadlines, and progress details. Click any goal row to edit it below.
+
+Choose a goal from **Goals**, or click its overview row, then edit its name,
+deadline, and amount. The
 deadline button cycles between **By level**, **By calendar date**, and **By play
 time**:
 
@@ -109,6 +121,28 @@ the main page shows its progress once rather than repeating aggregate totals.
 
 Income received while logged out is not retrospectively assigned to goals.
 
+## Chat goal summaries
+
+`/ge status` groups all tracked goals by level, calendar date, and play time.
+Each goal shows its actual savings against its final amount. **Goal for this
+level**, **Goal for Today**, and **Goal for this hour** show net savings added
+in that interval against the combined scheduled addition for that group.
+Spending allocated savings reduces the interval's progress; it never displays
+negative savings. Initial investments are kept separate from interval additions.
+Training appears once, using the earliest included, unlearned training level
+found in the class database within the current level plus the next two levels.
+
+The summary prints automatically on every level-up with a tracked level goal,
+on a new local calendar day with a tracked calendar goal, and after each full
+hour since a tracked play-time goal started. Play-time goals can have different
+hour boundaries. Coincident milestones produce one report. Login and `/reload`
+also print one summary; zoning and entering instances do not. Chat reports work
+independently of the toast setting.
+
+Interval progress survives reloads. Existing goals begin recording interval
+savings when this update first sees them; earlier additions within that interval
+cannot be reconstructed.
+
 ## Goal progress notifications
 
 Leveling shows a small toast centered near the top of the screen with your saved
@@ -186,6 +220,16 @@ on a manually added expense to delete it, or click its icon to include/exclude
 it. Deletion saves immediately. Class, profession, riding, and the original goal
 budget cannot be deleted; training retains its include/exclude controls.
 Expense fields also save on Escape.
+
+## Report a bug
+
+Click **Report bug** beside **Close** on the main page. The GitHub issue link is
+selected for copying: press **Ctrl+C**, paste it into your browser, and sign in
+to GitHub. Describe the problem and the steps to reproduce it, then submit the
+issue there. Include screenshots or the exact error text when available.
+
+**Back** returns to the main page; **Escape** closes the window and preserves
+pending goal edits. The addon does not submit reports automatically.
 
 ## Before-purchase warnings
 

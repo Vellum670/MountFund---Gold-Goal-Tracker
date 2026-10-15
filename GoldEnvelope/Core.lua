@@ -1,3 +1,5 @@
+-- Character events, persistent goal state, summaries, and purchase confirmations.
+-- Real money events and affordability always use player APIs, never previews.
 local addonName, ns = ...
 ns.name = addonName
 ns.WARNING_COOLDOWN_SECONDS = 120
@@ -58,6 +60,144 @@ function ns.GetBudget()
     local budget = ns.Model.Budget(goals, ns.GetPlayerLevel(), ns.GetPlayerMoney(), training)
     budget.trainingComplete = complete
     return budget
+end
+
+function ns.StatusCoins(amount)
+    local gold,silver,copper=ns.Model.SplitCoins(amount)
+    local parts={}
+    if gold>0 then
+        local digits=tostring(gold):reverse():gsub("(%d%d%d)","%1,"):reverse():gsub("^,","")
+        parts[#parts+1]=digits.."g"
+    end
+    if silver>0 then parts[#parts+1]=silver.."s" end
+    if copper>0 or #parts==0 then parts[#parts+1]=copper.."c" end
+    return table.concat(parts," ")
+end
+
+-- Interval baselines persist across reloads. Store scalars so preview goal copies
+-- cannot share or mutate real progress bookkeeping.
+function ns.StatusInterval(goal, level)
+    local kind=goal.goalType or "level"
+    local now,played=ns.Now(),ns.GetPlayedSeconds()
+    if kind=="date" then
+        local parts=date("*t",now)
+        local first=time({year=parts.year,month=parts.month,day=parts.day,hour=0,min=0,sec=0})
+        local last=time({year=parts.year,month=parts.month,day=parts.day+1,hour=0,min=0,sec=0})
+        return "date:"..date("%Y-%m-%d",now),
+            math.max(0,ns.Model.TargetAtLevel(goal,level,last,played)-ns.Model.TargetAtLevel(goal,level,first,played))
+    elseif kind=="played" then
+        local start=goal.startPlayed or 0
+        local hour=math.floor(math.max(0,played-start)/3600)
+        local first=start+hour*3600
+        return "played:"..start..":"..hour,
+            math.max(0,ns.Model.TargetAtLevel(goal,level,now,first+3600)-ns.Model.TargetAtLevel(goal,level,now,first))
+    end
+    return "level:"..level,ns.Model.LevelPlanStep(goal,level).addition
+end
+
+function ns.SyncStatusIntervals(goals, level)
+    for _,goal in ipairs(goals) do
+        local key=ns.StatusInterval(goal,level)
+        if goal.statusIntervalKey~=key or goal.statusIntervalActive~=goal.active then
+            goal.statusIntervalKey=key
+            goal.statusIntervalBase=goal.savedCopper or 0
+            goal.statusIntervalActive=goal.active
+        end
+    end
+end
+
+-- Chat and the main-page overview share one read-only display snapshot.
+-- Automatic reports use real data; manual reports may describe a session preview.
+function ns.BuildGoalStatus(real, levelOverride)
+    local level = real and (levelOverride or UnitLevel("player")) or ns.GetPlayerLevel()
+    local balance = real and GetMoney() or ns.GetPlayerMoney()
+    local source = real and ns.db.goals or ns.GetGoals()
+    local goals = {}
+    for index, goal in ipairs(source) do goals[index] = ns.Model.CopyGoal(goal) end
+    ns.SyncStatusIntervals(goals, level)
+    ns.Model.Reconcile(goals, balance)
+    local training, complete, nextLevel = ns.TrainingRunway(nil, nil, goals, level)
+    local budget = ns.Model.Budget(goals, level, balance, training)
+    local sections = {
+        {kind = "level", title = "LEVEL GOALS • Level " .. level, label = "Goal for this level", rows = {}, saved = 0, target = 0},
+        {kind = "date", title = "CALENDAR GOALS • Today", label = "Goal for Today", rows = {}, saved = 0, target = 0},
+        {kind = "played", title = "PLAYTIME GOALS • Current hour", label = "Goal for this hour", rows = {}, saved = 0, target = 0},
+    }
+    local byKind = {}
+    for _, section in ipairs(sections) do byKind[section.kind] = section end
+    local status = {level = level, balance = balance, sections = sections, untracked = {},
+        training = training, trainingComplete = complete, trainingLevel = nextLevel,
+        trainingFunded = budget.trainingFunded, budget = budget, count = #goals, activeCount = 0}
+    for index, goal in ipairs(goals) do
+        local progress = ns.Model.GoalProgress(goal, level)
+        local row = {index = index, name = goal.name, saved = progress.saved, target = progress.target,
+            active = goal.active, ahead = progress.ahead, behind = progress.behind,
+            goalType = goal.goalType or "level", targetLevel = goal.targetLevel,
+            deadlineTime = goal.deadlineTime, durationSeconds = goal.durationSeconds}
+        if goal.active then
+            local section = byKind[row.goalType]
+            local _, addition = ns.StatusInterval(goal, level)
+            section.saved = section.saved + math.max(0, progress.saved - (goal.statusIntervalBase or progress.saved))
+            section.target = section.target + addition
+            section.rows[#section.rows + 1] = row
+            status.activeCount = status.activeCount + 1
+        else
+            status.untracked[#status.untracked + 1] = row
+        end
+    end
+    return status
+end
+
+function ns.PrintStatus(real, levelOverride)
+    if real then ns.SyncStatusIntervals(ns.db.goals, levelOverride or UnitLevel("player")) end
+    local status = ns.BuildGoalStatus(real, levelOverride)
+    local function line(text) DEFAULT_CHAT_FRAME:AddMessage(text) end
+    line("|cffffd36eGold Envelope • Goal summary|r")
+    line("  " .. (not real and ns.testMoneyCopper ~= nil and "Test wallet: " or "Wallet: ") .. ns.StatusCoins(status.balance))
+    if status.training > 0 or not status.trainingComplete then
+        line("  " .. (status.trainingLevel and "Lvl " .. status.trainingLevel .. " " or "")
+            .. "Class Training: " .. ns.StatusCoins(status.training)
+            .. (status.trainingComplete and "" or " (some prices unknown)"))
+    end
+    for _, section in ipairs(status.sections) do
+        if #section.rows > 0 then
+            line("|cffffd36e" .. section.title .. "|r")
+            for _, row in ipairs(section.rows) do
+                line("  " .. row.name .. ": " .. ns.StatusCoins(row.saved) .. " / " .. ns.StatusCoins(row.target))
+            end
+            line("  " .. section.label .. ": " .. ns.StatusCoins(section.saved) .. " / " .. ns.StatusCoins(section.target))
+        end
+    end
+    if status.activeCount == 0 then line("  No tracked goals.") end
+end
+
+local function hasStatusGoal(kind)
+    for _,goal in ipairs(ns.db.goals) do
+        if goal.active and (goal.goalType or "level")==kind then return true end
+    end
+    return false
+end
+
+local function resetStatusClock()
+    ns.SyncStatusIntervals(ns.db.goals,UnitLevel("player"))
+    ns.statusDay=date("%Y-%m-%d",ns.Now())
+    ns.statusPlayed=ns.GetPlayedSeconds()
+end
+
+function ns.CheckStatusMilestones()
+    if not ns.db or ns.outOfWorld then return end
+    local today=date("%Y-%m-%d",ns.Now())
+    local played=ns.GetPlayedSeconds()
+    local previous=ns.statusPlayed or played
+    local due=ns.statusDay~=nil and today>ns.statusDay and hasStatusGoal("date")
+    for _,goal in ipairs(ns.db.goals) do
+        if goal.active and goal.goalType=="played" then
+            local start=goal.startPlayed or 0
+            if math.floor(math.max(0,played-start)/3600)>math.floor(math.max(0,previous-start)/3600) then due=true end
+        end
+    end
+    ns.statusDay,ns.statusPlayed=today,played
+    if due then ns.PrintStatus(true) end
 end
 
 -- Copy just the display values so an open toast never changes its goal data.
@@ -140,7 +280,11 @@ function ns.ObserveMoney()
     ns.lastMoney = balance
     local level = UnitLevel("player")
     ns.db.earnings = ns.db.earnings or {}
-    local record = ns.db.earnings[level] or { income = 0, spending = 0 }
+    ns.SyncStatusIntervals(ns.db.goals,level)
+    local record = ns.db.earnings[level]
+    if type(record) ~= "table" then record = {} end
+    if not ns.Model.IsInteger(record.income, 0, ns.Model.MAX_COPPER) then record.income = 0 end
+    if not ns.Model.IsInteger(record.spending, 0, ns.Model.MAX_COPPER) then record.spending = 0 end
     ns.db.earnings[level] = record
     if difference > 0 then
         record.income = record.income + difference
@@ -239,12 +383,14 @@ local function StartSession()
     end
     ns.Model.Reconcile(ns.db.goals, GetMoney())
     ns.db.version = 2
+    resetStatusClock()
     ns.Changed()
 end
 
 local function Initialize()
     ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals = nil, nil, nil
     ns.loginToastHandled = nil
+    ns.statusLoginHandled=nil
     ns.CancelPurchase()
     if ns.HideLevelUpToast then ns.HideLevelUpToast() end
     GoldEnvelopeDB = type(GoldEnvelopeDB) == "table" and GoldEnvelopeDB or {}
@@ -260,6 +406,19 @@ local function Initialize()
     end
     if #valid ~= #ns.db.goals then ns.Print("Some saved goals were invalid and were skipped.") end
     ns.db.goals = valid
+    for _, goal in ipairs(valid) do goal.milestones = goal.milestones or {} end
+    local quotes = {}
+    if type(ns.db.trainerCatalog) == "table" then
+        for key, quote in pairs(ns.db.trainerCatalog) do
+            if type(key) == "string" and ns.Model.ValidateExpense(quote, false) then
+                quote.key = key
+                quotes[key] = quote
+            end
+        end
+    end
+    ns.db.trainerCatalog = quotes
+    ns.db.earnings = type(ns.db.earnings) == "table" and ns.db.earnings or {}
+    resetStatusClock()
     if ns.RefreshTestContext then ns.RefreshTestContext() end
 end
 
@@ -277,6 +436,10 @@ frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
     if event == "PLAYER_LOGIN" then StartSession() end
     if event=="PLAYER_ENTERING_WORLD" then
         ns.outOfWorld=false; if not ns.playStartedAt then ns.playStartedAt=GetTime() end
+        if not ns.statusLoginHandled and (arg==true or isReloadingUi==true) then
+            ns.statusLoginHandled=true
+            C_Timer.After(0,function() resetStatusClock(); ns.PrintStatus(true) end)
+        end
         -- The initial-login flag excludes zoning, instances, and UI reloads.
         if not ns.loginToastHandled then
             ns.loginToastHandled=true
@@ -314,7 +477,9 @@ frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
             and level > (ns.lastLevelUpEvent or 0) then
             ns.lastLevelUpEvent = level
             C_Timer.After(0, function()
-                ns.Changed()
+                ns.SyncStatusIntervals(ns.db.goals,level)
+                if ns.RefreshUI then ns.RefreshUI() end
+                if hasStatusGoal("level") then ns.PrintStatus(true,level) end
                 if ns.db.levelUpToasts and ns.QueueLevelUpToast then ns.QueueLevelUpToast(ns.testPlayerLevel or level) end
             end)
         end
@@ -335,6 +500,7 @@ frame:SetScript("OnUpdate",function(_,elapsed)
         ns.FlushPlayClock()
         if not ns.outOfWorld then ns.playStartedAt=GetTime() end
         ns.Changed()
+        ns.CheckStatusMilestones()
     end
 end)
 
@@ -426,25 +592,7 @@ SlashCmdList.GOLDENVELOPE = function(message)
         if ns.TestLevelUpToast then ns.TestLevelUpToast() end
         ns.Print("Preview only; your goals and money are unchanged.")
     elseif message:match("^%s*status%s*$") then
-        ns.Model.Reconcile(ns.GetGoals(), ns.GetPlayerMoney())
-        local budget = ns.GetBudget()
-        ns.Print((ns.testMoneyCopper~=nil and "Test wallet: " or "Wallet: ") .. ns.Model.FormatCoins(budget.balance) .. "; saved toward goals: "
-            .. ns.Model.FormatCoins(budget.saved) .. "; " .. (budget.behind > 0 and "behind: " or "ahead: ")
-            .. ns.Model.FormatCoins(budget.behind > 0 and budget.behind or budget.ahead))
-        for _, goal in ipairs(ns.GetGoals()) do
-            if goal.active then
-                local progress = ns.Model.GoalProgress(goal, ns.GetPlayerLevel())
-                if goal.targetCopper == 0 and goal.includeClassTraining then
-                    ns.Print(goal.name .. ": funded " .. ns.Model.FormatCoins(budget.trainingFunded) .. " / " .. ns.Model.FormatCoins(budget.trainingDue))
-                else ns.Print(goal.name .. ": " .. ns.Model.FormatCoins(progress.saved) .. " / "
-                    .. ns.Model.FormatCoins(progress.target) .. string.format(" (%.1f%%)", progress.percent)
-                    .. "; " .. (progress.behind > 0 and "behind " or "ahead ")
-                    .. ns.Model.FormatCoins(progress.behind > 0 and progress.behind or progress.ahead))
-                end
-            end
-        end
-        if budget.trainingDue > 0 then ns.Print("Next two levels' training: " .. ns.Model.FormatCoins(budget.trainingDue)
-            .. "; funded: " .. ns.Model.FormatCoins(budget.trainingFunded)) end
+        ns.PrintStatus()
     elseif message:match("^%s*toasts%s*$") then
         ns.db.levelUpToasts = not ns.db.levelUpToasts
         if not ns.db.levelUpToasts and ns.HideLevelUpToast then ns.HideLevelUpToast() end
