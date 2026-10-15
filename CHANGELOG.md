@@ -4,6 +4,8 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 ## Unreleased
 
+- Add the selected horse-on-a-gold-coin project icon for the CurseForge listing.
+
 ## 1.2.9 - 2026-10-15
 
 - Keep missing savings visible for unfinished goals at or past their level,
