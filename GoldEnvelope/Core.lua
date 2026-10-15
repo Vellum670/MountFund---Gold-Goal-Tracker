@@ -1,6 +1,5 @@
 local addonName, ns = ...
 ns.name = addonName
-ns.revision = 0
 ns.WARNING_COOLDOWN_SECONDS = 120
 ns.warningCooldownUntil = 0
 ns.TEST_COMMAND_PASSWORD = "Quantum123"
@@ -75,8 +74,10 @@ function ns.BuildLevelUpSummary(level)
         if goal.active then ordered[#ordered + 1] = { goal = goal, index = index } end
     end
     if #ordered == 0 then return nil end
+    local timed=false
+    for _,entry in ipairs(ordered) do if ns.Model.IsTimeGoal(entry.goal) then timed=true; break end end
     table.sort(ordered, function(a, b)
-        if ns.Model.IsTimeGoal(a.goal) or ns.Model.IsTimeGoal(b.goal) then
+        if timed then
             local pa,pb=ns.Model.Priority(a.goal,level),ns.Model.Priority(b.goal,level)
             if pa~=pb then return pa<pb end
         end
@@ -154,7 +155,6 @@ function ns.ObserveMoney()
 end
 
 function ns.Changed()
-    ns.revision = ns.revision + 1
     if ns.RefreshUI then ns.RefreshUI() end
 end
 
@@ -402,6 +402,7 @@ SlashCmdList.GOLDENVELOPE = function(message)
             if #coins < 1 or #coins > 3 then TestGoldUsage(); return end
             local balance, problem = ns.Model.ParseCoins(coins[1], coins[2], coins[3])
             if not balance then ns.Print(problem); TestGoldUsage(); return end
+            if ns.ui and ns.ui:IsShown() and ns.SaveAllFields then ns.SaveAllFields(true) end
             local previous = ns.GetPlayerMoney()
             if not ns.testGoals then
                 ns.testGoals = {}

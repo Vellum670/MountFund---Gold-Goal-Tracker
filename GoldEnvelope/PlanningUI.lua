@@ -39,7 +39,7 @@ function ns.AbilityGroups(goal,classOnly)
             local isAbility=item.source=="class" or item.source=="profession"
             local key=isAbility and item.source .. ":" .. item.name or item.key
             local group=byKey[key]
-            if not group then group={expenses={},cost=0,readOnly=false,included=false,maxed=false}; byKey[key]=group; groups[#groups+1]=group end
+            if not group then group={expenses={},cost=0,included=false,maxed=false}; byKey[key]=group; groups[#groups+1]=group end
             group.expenses[#group.expenses+1]=item
             if isAbility then
                 group.included=group.included or item.selected~=false

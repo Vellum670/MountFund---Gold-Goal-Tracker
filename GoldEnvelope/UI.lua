@@ -311,10 +311,17 @@ local function renderPlan(goal)
     local viewportHeight=math.min(310,math.max(70,contentHeight))
     ui.planContent:SetHeight(contentHeight); ui.scroll:SetHeight(viewportHeight)
     if ui.currentPage=="plan" then ns.ResizePage(55+25+viewportHeight+46) end
-    ui.scroll:SetVerticalScroll(timed and 0 or math.max(0,ns.GetPlayerLevel()-first-1)*35)
 end
 showEditor=function(updated,restore)
     local ui=ns.ui; ui.updatingEditor=true
+    if not updated and not restore then
+        local pending
+        if ns.testMoneyCopper~=nil then pending=ns.testEditorDraft else pending=ns.db.editorDraft end
+        local saved=ns.GetGoals()[selected]
+        if pending and pending.index==selected and (not saved or pending.goal.name==saved.name) then
+            updated=copyGoal(pending.goal); restore=pending
+        end
+    end
     if ns.ClosePlanningWindows then ns.ClosePlanningWindows() end
     local saved=ns.GetGoals()[selected]
     ui.selectedGoalIndex=selected
@@ -348,7 +355,9 @@ saveCurrentGoal=function()
     ns.GetGoals()[selected]=goal; Model.Reconcile(ns.GetGoals(),ns.GetPlayerMoney())
     draft=copyGoal(goal)
     ns.ui.savedEditorInputs=editorInputs()
-    if ns.testMoneyCopper~=nil then ns.testEditorDraft=nil else ns.db.editorDraft=nil end
+    local buffers=ns.testMoneyCopper~=nil and ns or ns.db
+    local key=ns.testMoneyCopper~=nil and "testEditorDraft" or "editorDraft"
+    if buffers[key] and buffers[key].index==selected then buffers[key]=nil end
     refreshEditorControls()
     if ns.UpdateOpenPlannerGoal then ns.UpdateOpenPlannerGoal(goal) end
     ns.Changed(); ns.ui.error:SetText(""); return true
@@ -380,7 +389,7 @@ end
 local function applyPlannerChoices(updated)
     local choices=copyGoal(updated)
     draft.expenses,draft.includeClassTraining,draft.nextExpenseID=choices.expenses,choices.includeClassTraining,choices.nextExpenseID
-    draft.planMode,draft.planDecision=choices.planMode,choices.planDecision
+    draft.planMode=choices.planMode
     if draft.planMode=="items" then
         draft.targetCopper=Model.ExpenseTotal(draft); ns.ui.updatingEditor=true
         setCoins(ns.ui.amount,draft.targetCopper); ns.ui.updatingEditor=false
@@ -398,7 +407,7 @@ end
 local function planCurrentGoal()
     local goal,err=readEditor(true); if not goal then ns.ui.error:SetText(err); return end
     local function open() ns.EnableItemPlanning(goal); ns.OpenExpensePlanner(goal,applyPlannerChoices) end
-    if goal.planMode=="items" then open() else ns.AskGoalPlanning(goal,open,function() draft.planDecision="simple"; saveCurrentGoal() end) end
+    if goal.planMode=="items" then open() else ns.AskGoalPlanning(goal,open,saveCurrentGoal) end
 end
 local function planClassTraining()
     local goal,err=readEditor(true); if not goal then ns.ui.error:SetText(err); return end
@@ -624,7 +633,13 @@ createUI=function()
     ui.planChangeHeading=label(plan,"This level",94,0,140,"GameFontNormalSmall"); ui.planTargetHeading=label(plan,"Goal for level",245,0,105,"GameFontNormalSmall")
     ui.scroll=CreateFrame("ScrollFrame",nil,plan,"UIPanelScrollFrameTemplate"); ui.scroll:SetPoint("TOPLEFT",0,-25); ui.scroll:SetSize(354,310)
     ui.planContent=CreateFrame("Frame",nil,ui.scroll); ui.planContent:SetSize(350,1); ui.scroll:SetScrollChild(ui.planContent); ui.planRows={}
-    plan:SetScript("OnShow",function() if draft then renderPlan(ns.GetGoals()[selected] or draft) end end)
+    plan:SetScript("OnShow",function()
+        if draft then
+            local goal=ns.GetGoals()[selected] or draft
+            renderPlan(goal)
+            ui.scroll:SetVerticalScroll(Model.IsTimeGoal(goal) and 0 or math.max(0,ns.GetPlayerLevel()-(goal.startLevel or ns.GetPlayerLevel())-1)*35)
+        end
+    end)
     plan:SetScript("OnHide",function() GameTooltip:Hide() end)
     -- Settings controls exist before any refresh, but the page stays hidden.
     settingsPage(); ui.history={}; ns.ShowPage("main",true)

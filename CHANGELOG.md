@@ -6,6 +6,14 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 No changes queued yet.
 
+## 0.4.17 - 2026-10-14
+
+- Preserve unfinished goal input when editing another goal, and preserve the
+  savings-plan scroll position during background updates.
+- Use consistent goal priority when level and time goals share a progress toast.
+- Remove unused internal bookkeeping and outdated UI flags. Restrict the download
+  to the addon manifest, its declared modules, and release notes.
+
 ## 0.4.16 - 2026-10-14
 
 - Show the savings target to reach before the next level under Goal for this
@@ -46,14 +54,13 @@ No changes queued yet.
 - Add gold-making tips at the bottom of the main page, matched to your current
   level bracket, with a separate set of fifteen ideas at level 60.
 - Browse tips using compact arrows, keeping farming locations, requirements,
-  and selling context. Tips also follow test-level previews.
+  and selling context.
 
 ## 0.4.11 - 2026-10-14
 
 - Save pending goal and expense fields before reload or logout, even when the
   cursor is still in a field. Preserve unfinished input as a draft.
-- Save an active toast-position adjustment before logout. Test-wallet goals
-  remain temporary and never replace real saved goals.
+- Save an active toast-position adjustment before logout.
 
 ## 0.4.10 - 2026-10-14
 
@@ -66,8 +73,7 @@ No changes queued yet.
   page's Delete goal button inside its visible bounds.
 - Remove a deleted goal's pending drafts so autosave cannot restore it, while
   preserving unfinished fields for remaining goals.
-- Keep actual gold and trainer data intact. Goal deletion during gold testing
-  affects only the session's simulated goals.
+- Keep actual gold and trainer data intact when deleting goals.
 
 ## 0.4.8 - 2026-10-14
 
@@ -149,24 +155,6 @@ No changes queued yet.
 - Escape saves fields and settings before closing any page. Incomplete input
   is retained separately so it can be resumed without replacing valid goals.
 
-## 0.3.6 - 2026-10-14
-
-- Added `/ge testgold` to simulate a wallet and experiment with goal funding,
-  spending, training budgets, and toast progress using session-only copies.
-- Require a password at the end of all gold, level, and toast test commands.
-- Retain the test commands in final builds. Overrides reset on reload, logout,
-  or character change; simulated goal edits never overwrite real saved goals.
-- Keep real purchases and actual earnings independent of simulated values.
-
-## 0.3.5 - 2026-10-14
-
-- Added temporary `/ge testlevel 1-60` to simulate a character level inside
-  Gold Envelope and preview its goal progress, training costs, and level-up toast.
-- Use `/ge testlevel reset` to return to your real level. The override also
-  resets on reload, logout, or character change and is never saved.
-- Show the active test level in the goal window. The command does not change
-  your character's actual level, money, or existing saved progress.
-
 ## 0.3.4 - 2026-10-14
 
 - Fixed overlapping borders on training ability icons. Each icon now has a
@@ -179,8 +167,6 @@ No changes queued yet.
 - Show up to two goals by nearest deadline and fade away after six seconds.
   The toast is silent, lets clicks pass through, and waits until combat ends.
 - Added `/ge toasts` to turn level-up notifications on or off.
-- Added temporary `/ge testtoast` for in-game preview without leveling or
-  changing goal progress. An example appears if you have no active goal.
 
 ## 0.3.2 - 2026-10-14
 

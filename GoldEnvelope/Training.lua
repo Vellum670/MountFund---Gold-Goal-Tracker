@@ -257,7 +257,7 @@ end
 
 function ns.EnableItemPlanning(goal)
     local wasItemized=goal.planMode=="items"
-    goal.planMode, goal.planDecision = "items", "items"
+    goal.planMode = "items"
     if goal.presetID == "class-training" then goal.includeClassTraining = true end
     goal.expenses = goal.expenses or {}
     local hasGoalExpense,hasInitial = false,false

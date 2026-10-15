@@ -22,7 +22,15 @@ if version != '0.3.1':
         raise SystemExit(f'Add a dated CHANGELOG.md entry with change bullets for {version} before packaging.')
 output = root / 'downloads' / 'GoldEnvelope.zip'
 output.parent.mkdir(exist_ok=True)
-files = {path.relative_to(root).as_posix(): path for path in sorted(addon.rglob('*')) if path.is_file()}
+# Ship only the load manifest and its modules; local scratch files and caches
+# inside the addon folder must not accidentally become release contents.
+modules = [line.strip() for line in toc.splitlines() if line.strip() and not line.startswith('#')]
+files = {'GoldEnvelope/GoldEnvelope.toc': addon / 'GoldEnvelope.toc'}
+for module in modules:
+    path = addon / module
+    if not path.is_file() or not path.resolve().is_relative_to(addon.resolve()):
+        raise SystemExit(f'Invalid or missing addon module: {module}')
+    files['GoldEnvelope/' + module] = path
 files['GoldEnvelope/CHANGELOG.md'] = changelog
 with ZipFile(output, 'w', compression=ZIP_DEFLATED, compresslevel=9) as archive:
     for name, path in files.items():

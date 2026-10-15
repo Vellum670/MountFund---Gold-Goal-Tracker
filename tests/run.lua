@@ -650,7 +650,7 @@ test('learned ranks advance the icon and prerequisite abilities remain selectabl
     charge.scripts.OnEnter(charge); equal(GameTooltip.spellID,11578)
     local button=expenseButton(20616); equal(button.expense.eligible,false)
     local before=ns.TrainingRunway(ns.planningFrame.goal)
-    equal(button.icon.desaturated,false); equal(button.readOnly,false)
+    equal(button.icon.desaturated,false); equal(button:IsEnabled(),true)
     button.scripts.OnClick(button,'LeftButton'); button=expenseButton(20616)
     equal(button.expense.selected,false); equal(button.icon.desaturated,true)
     equal(ns.TrainingRunway(ns.planningFrame.goal),before)
@@ -949,10 +949,9 @@ test('invalid test levels leave the current simulation pending purchase and save
     ns.testPlayerLevel=35
     local previous=copyData(ns.db)
     for _,argument in ipairs({'0','61','-1','25.5','25.0','4e1','0x28','+25','nan','inf','hello','25 extra','reset extra'}) do
-        local revision=ns.revision
         SlashCmdList.GOLDENVELOPE('testlevel ' .. argument .. ' Quantum123')
         equal(ns.GetPlayerLevel(),35,argument); equal(ns.pending,warning,argument)
-        equal(ns.revision,revision,argument); equal(executions,0,argument)
+        equal(executions,0,argument)
         sameData(ns.db,previous)
     end
     assert(table.concat(messages,'\n'):find('Usage: /ge testlevel',1,true))
@@ -962,9 +961,9 @@ test('querying the temporary test level reports real and simulated levels withou
     SlashCmdList.GOLDENVELOPE('testlevel Quantum123')
     equal(ns.testPlayerLevel,nil); assert(table.concat(messages,'\n'):find('actual level: 25',1,true))
     SlashCmdList.GOLDENVELOPE('testlevel 40 Quantum123')
-    local preview=shownToast().summary; local revision=ns.revision; messages={}
+    local preview=shownToast().summary; messages={}
     SlashCmdList.GOLDENVELOPE('testlevel Quantum123')
-    equal(ns.GetPlayerLevel(),40); equal(shownToast().summary,preview); equal(ns.revision,revision)
+    equal(ns.GetPlayerLevel(),40); equal(shownToast().summary,preview)
     local output=table.concat(messages,'\n')
     assert(output:find('Test level: 40',1,true)); assert(output:find('actual level: 25',1,true))
     sameData(ns.db,previous)
@@ -1081,10 +1080,9 @@ test('every test command requires the exact trailing password without changing r
         'testgold 100 Quantum123 extra','testgold 100 Quantum123 Quantum123','testgold reset extra Quantum123',
     }
     for _,command in ipairs(commands) do
-        local revision=ns.revision
         SlashCmdList.GOLDENVELOPE(command)
         equal(ns.testPlayerLevel,nil,command); equal(ns.testMoneyCopper,nil,command); equal(ns.testGoals,nil,command)
-        equal(ns.pending,warning,command); equal(ns.revision,revision,command); equal(executions,0,command)
+        equal(ns.pending,warning,command); equal(executions,0,command)
         assert(not ns.levelUpToast:IsShown(),command .. ' showed a toast')
         sameData(ns.db,previous)
     end
@@ -1107,10 +1105,9 @@ test('unauthorized resets cannot clear an active gold or level simulation',funct
     local previous=copyData(ns.db); local roster=copyData(ns.GetGoals()); local preview=shownToast().summary
     for _,command in ipairs({'testgold reset','testlevel reset','testgold reset quantum123',
         'testlevel reset wrong','testgold reset Quantum123 extra','testtoast Quantum123 extra'}) do
-        local revision=ns.revision
         SlashCmdList.GOLDENVELOPE(command)
         equal(ns.GetPlayerMoney(),1000000); equal(ns.GetPlayerLevel(),40)
-        equal(ns.pending,warning); equal(ns.revision,revision); equal(shownToast().summary,preview)
+        equal(ns.pending,warning); equal(shownToast().summary,preview)
         sameData(ns.GetGoals(),roster); sameData(ns.db,previous)
     end
 end)
@@ -1135,10 +1132,9 @@ test('invalid test gold rejects malformed coins overflows and extra arguments wi
     for _,argument in ipairs({'-1','+1','1.5','1.0','1e2','0x10','nan','inf','hello',
         '100000001','0 -1','0 100','0 +1','0 1.5','0 0 -1','0 0 100','0 0 1.5',
         '0 0 0 0','reset extra'}) do
-        local revision=ns.revision
         SlashCmdList.GOLDENVELOPE('testgold ' .. argument .. ' Quantum123')
         equal(ns.GetPlayerMoney(),80910,argument); equal(ns.pending,warning,argument)
-        equal(ns.revision,revision,argument); equal(shownToast().summary,preview,argument)
+        equal(shownToast().summary,preview,argument)
         sameData(ns.GetGoals(),roster); sameData(ns.db,previous)
     end
 end)
@@ -1184,10 +1180,10 @@ test('gold query and status report the simulated wallet without allocating it ag
     equal(ns.testMoneyCopper,nil); equal(ns.testGoals,nil)
     SlashCmdList.GOLDENVELOPE('testgold 12 34 56 Quantum123')
     local roster=copyData(ns.GetGoals()); local previous=copyData(ns.db)
-    local revision=ns.revision; local preview=shownToast().summary; messages={}
+    local preview=shownToast().summary; messages={}
     SlashCmdList.GOLDENVELOPE('testgold Quantum123')
     assert(table.concat(messages,'\n'):find(M.FormatCoins(123456),1,true))
-    equal(ns.revision,revision); equal(shownToast().summary,preview)
+    equal(shownToast().summary,preview)
     SlashCmdList.GOLDENVELOPE('status')
     assert(table.concat(messages,'\n'):find(M.FormatCoins(123456),1,true))
     sameData(ns.GetGoals(),roster); sameData(ns.db,previous)
@@ -1416,7 +1412,7 @@ test('training list uses the character class and keeps fully learned abilities s
     openClassPlanner(nil,60)
     local charge=expenseButton(11578)
     equal(charge.expense.name,'Charge'); equal(charge.level.text,'Max'); equal(charge.maxed,true)
-    equal(charge.requiredLevel,nil); equal(charge.readOnly,false)
+    equal(charge.requiredLevel,nil); equal(charge:IsEnabled(),true)
     charge.scripts.OnEnter(charge); equal(GameTooltip.spellID,11578)
     local before=ns.TrainingRunway(ns.planningFrame.goal)
     charge.scripts.OnClick(charge,'LeftButton'); charge=expenseButton(11578)
@@ -1582,7 +1578,7 @@ test('Sunder Armor can toggle every rank while level 35 is simulated',function()
     SlashCmdList.GOLDENVELOPE('testlevel 35 Quantum123')
     local sunder=expenseButton(11596)
     equal(sunder.expense.name,'Sunder Armor'); equal(sunder.level.text,'Lv 46')
-    equal(sunder.expense.eligible,true); equal(sunder.readOnly,false)
+    equal(sunder.expense.eligible,true); equal(sunder:IsEnabled(),true)
     equal(sunder.icon.desaturated,false); equal(#sunder.expenses,4)
     local before=ns.TrainingRunway()
     sunder.scripts.OnClick(sunder,'LeftButton'); sunder=expenseButton(11596)
@@ -1637,7 +1633,7 @@ test('reused class icons clear future-rank fields when every ability becomes Max
     for _,button in ipairs(ns.planningFrame.expenseButtons) do
         if button:IsShown() then
             equal(button.level.text,'Max'); equal(button.requiredLevel,nil); equal(button.maxed,true)
-            equal(button.readOnly,false); equal(button.ready,nil)
+            equal(button:IsEnabled(),true); equal(button.ready,nil)
             assert(button.expense.name>=previousName); previousName=button.expense.name
         end
     end
@@ -1652,7 +1648,7 @@ test('profession abilities with unavailable ranks stay selectable after their la
         {key='profession:two',source='profession',name='Recipe',level=30,copper=2000,selected=true,paid=true,spellID=555002}}
     local updated; ns.OpenExpensePlanner(g,function(value) updated=value end)
     local recipe=expenseButton(555002)
-    equal(recipe.level.text,'Max'); equal(recipe.readOnly,false); equal(recipe.icon.desaturated,false)
+    equal(recipe.level.text,'Max'); equal(recipe:IsEnabled(),true); equal(recipe.icon.desaturated,false)
     recipe.scripts.OnClick(recipe,'LeftButton'); recipe=expenseButton(555002)
     equal(recipe.icon.desaturated,true)
     for _,entry in ipairs(updated.expenses) do equal(entry.selected,false) end
@@ -2283,9 +2279,9 @@ test('unknown riding prices and excluded estimates preserve the entered mount al
     ns.SyncExpenses(g); equal(combined.copper,800000)
 end)
 test('unchanged purchase warnings confirm once after repeated background refreshes',function()
-    pending(); local before=ns.revision
+    pending()
     for _=1,3 do elapsed=elapsed+10; eventFrame.scripts.OnUpdate(nil,10) end
-    assert(ns.revision>before); assert(ns.pending)
+    assert(ns.db.playedSeconds>0); assert(ns.pending)
     ns.ConfirmPurchase(); equal(executions,1); equal(ns.pending,nil); equal(ns.WarningCooldownRemaining(),120)
 end)
 test('a change to planned training spending still refreshes a warning when reserved totals stay equal',function()
@@ -2433,6 +2429,39 @@ test('the current goal amount is anchored just beside its label rather than at t
     heading.GetStringWidth=function() return 99 end
     ns.RefreshUI(); equal(heading.width,99); equal(amount.width,261)
     heading.GetStringWidth=nil
+end)
+
+test('an unfinished new goal survives saving another goal and can be completed later',function()
+    reset(); ns.UsePreset('mount-first'); click(ns.ui,'New')
+    ns.ui.name:SetText('Pending goal'); ns.ui.level:SetText(''); click(ns.ui,'Goals')
+    assert(ns.db.editorDraft); equal(ns.db.editorDraft.index,2)
+    ns.ui.goalPicker.rows[1].scripts.OnClick(); ns.CloseUI(); assert(ns.db.editorDraft)
+    ns.ToggleUI(); equal(ns.ui.name.text,'Pending goal'); equal(ns.ui.level.text,'')
+    blur(ns.ui.level,'40'); equal(#ns.db.goals,2); equal(ns.db.goals[2].name,'Pending goal')
+end)
+test('focused real edits are saved before entering wallet simulation',function()
+    reset(); ns.UsePreset('mount-first'); ns.ui.name:SetText('Saved before preview')
+    SlashCmdList.GOLDENVELOPE('testgold 100 Quantum123')
+    equal(ns.db.goals[1].name,'Saved before preview')
+    SlashCmdList.GOLDENVELOPE('testgold reset Quantum123'); equal(ns.ui.name.text,'Saved before preview')
+end)
+test('plan scrolling remains where the player left it during routine updates',function()
+    reset(35); ns.db.goals={goal(1000000,40,25)}; ns.RefreshTestContext()
+    local scroll=ns.ui.scroll; local previous=scroll.SetVerticalScroll
+    scroll.SetVerticalScroll=function(self,value) self.scrollValue=value end
+    click(ns.ui.editor,'Savings plan'); equal(scroll.scrollValue,315)
+    scroll:SetVerticalScroll(140); ns.Changed(); equal(scroll.scrollValue,140)
+    eventFrame.scripts.OnUpdate(nil,10); equal(scroll.scrollValue,140)
+    scroll.SetVerticalScroll=previous
+end)
+test('mixed goal toast ordering consistently follows timeline priority',function()
+    reset(30); local a,b,c=goal(100000,40,1),goal(100000,35,29),goal(100000,60,25)
+    a.name,b.name,c.name='Earlier progress','Newer progress','Calendar progress'
+    c.goalType='date'; c.startTime=wallClock-100; c.deadlineTime=wallClock+100
+    for _,roster in ipairs({{a,b,c},{b,c,a},{c,a,b}}) do
+        ns.db.goals=roster; local summary=ns.BuildLevelUpSummary(30)
+        equal(summary.goals[1].name,a.name); equal(summary.goals[2].name,c.name)
+    end
 end)
 
 print(tests .. ' tests passed')
