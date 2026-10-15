@@ -637,13 +637,23 @@ test('hover shows the native tooltip for the exact spell rank even when excluded
     assert(table.concat(GameTooltip.lines,'\n'):find(ns.MoneyText(10000),1,true))
     button.scripts.OnLeave(button); equal(GameTooltip:IsShown(),false)
 end)
-test('learned ranks advance the icon and ineligible upgrades stay grey and hoverable',function()
+test('learned ranks advance the icon and prerequisite abilities remain selectable and hoverable',function()
     reset(); knownSpells[6178]=true; openClassPlanner(nil,60)
     local charge=expenseButton(11578); equal(charge.level.text,'Lv 46')
     charge.scripts.OnEnter(charge); equal(GameTooltip.spellID,11578)
-    local button=expenseButton(20616); local selected=button.expense.selected
-    equal(button.icon.desaturated,true); button.scripts.OnClick(button,'LeftButton')
-    equal(button.expense.selected,selected); button.scripts.OnEnter(button); equal(GameTooltip.spellID,20616)
+    local button=expenseButton(20616); equal(button.expense.eligible,false)
+    local before=ns.TrainingRunway(ns.planningFrame.goal)
+    equal(button.icon.desaturated,false); equal(button.readOnly,false)
+    button.scripts.OnClick(button,'LeftButton'); button=expenseButton(20616)
+    equal(button.expense.selected,false); equal(button.icon.desaturated,true)
+    equal(ns.TrainingRunway(ns.planningFrame.goal),before)
+    button.scripts.OnEnter(button); equal(GameTooltip.spellID,20616)
+    local tooltip=table.concat(GameTooltip.lines,'\n')
+    assert(tooltip:find('prerequisite before their costs count',1,true))
+    assert(tooltip:find('Excluded - click to include ability',1,true))
+    button.scripts.OnClick(button,'LeftButton'); button=expenseButton(20616)
+    equal(button.expense.selected,true); equal(button.icon.desaturated,false)
+    equal(ns.TrainingRunway(ns.planningFrame.goal),before)
     button.scripts.OnLeave(button)
 end)
 test('class training shows one icon per ability and excludes every rank across levels',function()
@@ -1379,17 +1389,33 @@ test('training ranks update with level and remain ordered by the next upgrade',f
     equal(expenseButton(6178).requiredLevel,26)
     SlashCmdList.GOLDENVELOPE('testlevel 30 Quantum123')
     local charge=expenseButton(11578); equal(charge.expense.name,'Charge'); equal(charge.level.text,'Lv 46')
-    local previous=0
-    for _,button in ipairs(ns.planningFrame.expenseButtons) do if button:IsShown() then assert(button.requiredLevel>=30 and button.requiredLevel>=previous); previous=button.requiredLevel end end
+    local previous,previousName=0,''
+    for _,button in ipairs(ns.planningFrame.expenseButtons) do
+        if button:IsShown() then
+            assert(button.sortLevel>=previous)
+            if button.sortLevel==previous then assert(button.expense.name>=previousName) end
+            if button.maxed then equal(button.level.text,'Max'); equal(button.requiredLevel,nil)
+            else assert(button.requiredLevel>30); equal(button.level.text,'Lv ' .. button.requiredLevel) end
+            previous,previousName=button.sortLevel,button.expense.name
+        end
+    end
     SlashCmdList.GOLDENVELOPE('testlevel reset Quantum123'); equal(expenseButton(6178).requiredLevel,26)
 end)
-test('training list uses the character class and removes fully learned upgrades',function()
+test('training list uses the character class and keeps fully learned abilities selectable as Max',function()
     reset(); class='MAGE'; knownSpells={}; local g=goal(); g.includeClassTraining=true; ns.SyncExpenses(g)
     ns.OpenTrainingPlanner(g,function() end)
     for _,button in ipairs(ns.planningFrame.expenseButtons) do if button:IsShown() then equal(button.expense.class,'MAGE') end end
     reset(); knownSpells[6178],knownSpells[11578]=true,true
     openClassPlanner(nil,60)
-    for _,button in ipairs(ns.planningFrame.expenseButtons) do if button:IsShown() then assert(button.expense.name~='Charge') end end
+    local charge=expenseButton(11578)
+    equal(charge.expense.name,'Charge'); equal(charge.level.text,'Max'); equal(charge.maxed,true)
+    equal(charge.requiredLevel,nil); equal(charge.readOnly,false)
+    charge.scripts.OnEnter(charge); equal(GameTooltip.spellID,11578)
+    local before=ns.TrainingRunway(ns.planningFrame.goal)
+    charge.scripts.OnClick(charge,'LeftButton'); charge=expenseButton(11578)
+    equal(charge.included,false); equal(charge.icon.desaturated,true)
+    for _,entry in ipairs(charge.expenses) do equal(entry.selected,false) end
+    equal(ns.TrainingRunway(ns.planningFrame.goal),before)
 end)
 test('calendar goal progress follows the deadline instead of character level',function()
     reset(); local start=wallClock
@@ -1521,15 +1547,111 @@ test('expense forms follow short grids without leaving the old empty area',funct
     equal(page.scroll.height,54); equal(ns.ui.height,335); equal(page.manual.point[3],-152)
     back(); equal(ns.ui.height,450)
 end)
-test('observed unpaid training is the next upgrade before a future rank',function()
+test('observed overdue prices remain in the budget while icons show the next future rank',function()
     reset(30); knownSpells[6178]=nil
+    local g=goal(); g.includeClassTraining=true; ns.SyncExpenses(g)
+    local beforeQuote=ns.TrainingRunway(g)
     ns.db.trainerCatalog['charge-quote']={source='class',class='WARRIOR',name='Charge',spellID=6178,level=26,copper=10000,paid=false}
     ns.UsePreset('mount-first'); click(ns.ui.editor,'Class training')
-    local charge=expenseButton(6178); equal(charge.ready,true); equal(charge.requiredLevel,30); equal(charge.level.text,'Now')
-    charge.scripts.OnEnter(charge); equal(GameTooltip.spellID,6178)
-    local previous=0
-    for _,button in ipairs(ns.planningFrame.expenseButtons) do if button:IsShown() then assert(button.requiredLevel>=previous); previous=button.requiredLevel end end
+    local charge=expenseButton(11578); equal(charge.requiredLevel,46); equal(charge.level.text,'Lv 46')
+    equal(ns.TrainingRunway(),beforeQuote+10000)
+    charge.scripts.OnEnter(charge); equal(GameTooltip.spellID,11578)
+    for _,button in ipairs(ns.planningFrame.expenseButtons) do
+        if button:IsShown() then assert(button.level.text~='Now') end
+    end
+    charge.scripts.OnClick(charge,'LeftButton'); equal(ns.TrainingRunway(),beforeQuote)
+    for _,entry in ipairs(ns.db.goals[1].expenses) do
+        if entry.name=='Charge' then equal(entry.selected,false) end
+    end
+    charge=expenseButton(11578); charge.scripts.OnClick(charge,'LeftButton')
+    equal(ns.TrainingRunway(),beforeQuote+10000)
     knownSpells[6178]=true; ns.CatalogChanged(); equal(expenseButton(11578).level.text,'Lv 46')
+    equal(ns.TrainingRunway(),beforeQuote)
+end)
+
+test('Sunder Armor can toggle every rank while level 35 is simulated',function()
+    reset(); ns.UsePreset('mount-first'); click(ns.ui.editor,'Class training')
+    SlashCmdList.GOLDENVELOPE('testlevel 35 Quantum123')
+    local sunder=expenseButton(11596)
+    equal(sunder.expense.name,'Sunder Armor'); equal(sunder.level.text,'Lv 46')
+    equal(sunder.expense.eligible,true); equal(sunder.readOnly,false)
+    equal(sunder.icon.desaturated,false); equal(#sunder.expenses,4)
+    local before=ns.TrainingRunway()
+    sunder.scripts.OnClick(sunder,'LeftButton'); sunder=expenseButton(11596)
+    equal(sunder.icon.desaturated,true)
+    for _,entry in ipairs(sunder.expenses) do equal(entry.selected,false) end
+    for _,entry in ipairs(ns.db.goals[1].expenses) do if entry.name=='Sunder Armor' then equal(entry.selected,false) end end
+    equal(ns.TrainingRunway(),before)
+    sunder.scripts.OnClick(sunder,'LeftButton'); sunder=expenseButton(11596)
+    equal(sunder.icon.desaturated,false)
+    for _,entry in ipairs(sunder.expenses) do equal(entry.selected,true) end
+    equal(ns.TrainingRunway(),before)
+end)
+
+test('a known higher Sunder rank satisfies its base prerequisite without budgeting unlearned abilities',function()
+    reset(44); equal(knownSpells[7386],nil); equal(knownSpells[8380],true)
+    local g=goal(1000000,60); chooseTraining(g,{[11596]=true,[11597]=true})
+    equal(ns.TrainingRunway(g),36000)
+    for _,entry in ipairs(g.expenses) do if entry.name=='Sunder Armor' then equal(entry.eligible,true) end end
+    knownSpells[7405],knownSpells[8380]=nil,nil; ns.SyncExpenses(g)
+    equal(ns.TrainingRunway(g),0)
+    for _,entry in ipairs(g.expenses) do if entry.name=='Sunder Armor' then equal(entry.eligible,false) end end
+    knownSpells[11596]=true; ns.SyncExpenses(g)
+    equal(ns.TrainingRunway(g),0); equal(ns.TrainingByLevel(g)[58],60000)
+end)
+
+test('the next upgrade is strictly after the current level and Max follows future ranks',function()
+    reset(34); local g=goal(1000000,60); g.includeClassTraining=true; ns.SyncExpenses(g)
+    knownSpells={}; ns.SyncExpenses(g)
+    local groups=ns.AbilityGroups(g,true); local seenSunder,seenFuture,seenMax=false,false,false
+    local previous,previousName=0,''
+    for _,group in ipairs(groups) do
+        assert(group.sortLevel>=previous)
+        if group.sortLevel==previous then assert(group.expense.name>=previousName) end
+        if group.maxed then
+            seenMax=true; equal(group.requiredLevel,nil)
+        else
+            assert(not seenMax); assert(group.requiredLevel>34); seenFuture=true
+        end
+        if group.expense.name=='Sunder Armor' then seenSunder=true; equal(group.requiredLevel,46); equal(group.expense.spellID,11596) end
+        previous,previousName=group.sortLevel,group.expense.name
+    end
+    assert(seenSunder and seenFuture and seenMax)
+end)
+
+test('reused class icons clear future-rank fields when every ability becomes Max',function()
+    reset(); ns.UsePreset('mount-first'); click(ns.ui.editor,'Class training')
+    local reused=ns.planningFrame.expenseButtons[1]
+    assert(reused.requiredLevel and not reused.maxed)
+    SlashCmdList.GOLDENVELOPE('testlevel 60 Quantum123')
+    equal(ns.planningFrame.expenseButtons[1],reused)
+    local previousName=''
+    for _,button in ipairs(ns.planningFrame.expenseButtons) do
+        if button:IsShown() then
+            equal(button.level.text,'Max'); equal(button.requiredLevel,nil); equal(button.maxed,true)
+            equal(button.readOnly,false); equal(button.ready,nil)
+            assert(button.expense.name>=previousName); previousName=button.expense.name
+        end
+    end
+    SlashCmdList.GOLDENVELOPE('testlevel reset Quantum123')
+    equal(ns.planningFrame.expenseButtons[1],reused)
+    equal(reused.maxed,false); assert(reused.requiredLevel>25)
+end)
+
+test('profession abilities with unavailable ranks stay selectable after their last level',function()
+    reset(35); local g=goal(10000,60); g.planMode='items'; g.presetID='profession-training'
+    g.expenses={{key='profession:one',source='profession',name='Recipe',level=20,copper=1000,selected=true,eligible=false,spellID=555001},
+        {key='profession:two',source='profession',name='Recipe',level=30,copper=2000,selected=true,paid=true,spellID=555002}}
+    local updated; ns.OpenExpensePlanner(g,function(value) updated=value end)
+    local recipe=expenseButton(555002)
+    equal(recipe.level.text,'Max'); equal(recipe.readOnly,false); equal(recipe.icon.desaturated,false)
+    recipe.scripts.OnClick(recipe,'LeftButton'); recipe=expenseButton(555002)
+    equal(recipe.icon.desaturated,true)
+    for _,entry in ipairs(updated.expenses) do equal(entry.selected,false) end
+    recipe.scripts.OnEnter(recipe); equal(GameTooltip.spellID,555002); equal(recipe.blocked,true)
+    ns.planningFrame.goal.expenses[1].eligible=true; ns.RefreshExpensePlanner()
+    recipe=expenseButton(555002); equal(recipe.blocked,nil); recipe.scripts.OnEnter(recipe)
+    assert(not table.concat(GameTooltip.lines,'\n'):find('prerequisite before their costs count',1,true))
 end)
 
 test('reused expense icons clear unknown-price tooltip flags when prices become known',function()

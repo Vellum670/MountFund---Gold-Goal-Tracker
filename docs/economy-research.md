@@ -1,7 +1,7 @@
 # Economy research and budgeting assumptions
 
 Research date: October 14, 2026. Economy model introduced in version 0.3.0;
-UI, selection, and scheduling notes updated for version 0.4.0.
+UI, selection, and scheduling notes updated for version 0.4.1.
 
 ## What can be supported by the evidence
 
@@ -85,17 +85,19 @@ can add server-specific entries. Discounts can change the actual quote; Blizzard
 [Forever Legacy system documentation](https://worldofwarcraft.blizzard.com/en-us/news/24307383/get-to-know-the-world-of-warcraft-forever-legacy-system)
 describes changes affecting vendor discounts.
 
-Known spells and race-ineligible entries are excluded. Later ranks whose first
-rank comes from a talent or quest require that first rank to be known. This is
+Known spells and race-ineligible entries are excluded from training costs.
+Later ranks whose first rank comes from a talent or quest require that first
+rank, or a later rank of the same ability, to be currently known. This is
 an eligibility approximation, not a complete recreation of all server-specific
 trainer prerequisites. An ability icon controls all its ranks; exclusions persist when new ranks are observed. Observed unpaid overdue
 training remains in the current training budget; unobserved historical ranks are
 not automatically charged to a newly created goal.
 
 The icon grid uses the current character's class and level. Each ability shows
-its next unlearned rank, sorted by the required level, including upgrades beyond
-the current goal's deadline. Fully learned abilities are hidden. Quest or talent
-prerequisites apply to later trainer ranks as well as the first cataloged rank.
+its next unlearned rank after the current level, sorted by the required level,
+including upgrades beyond the goal's deadline. Abilities without a later upgrade
+stay visible as **Max**, after future upgrades. Every ability can be included or
+excluded regardless of prerequisites; those checks apply to costs separately.
 
 ## Initial investment and training coexistence
 

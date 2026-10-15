@@ -143,11 +143,13 @@ Use the **Class training** button in the goal editor to open its ability page.
 The goal appears first. An eight-column grid uses one clickable icon per ability;
 clicking it includes or excludes every rank, including future ranks beyond the
 goal's deadline. Icons adapt to your current class and level, ordered by the next
-unlearned rank's level. Fully learned abilities disappear; observed unpaid
-training you can already buy is labeled **Now**, ahead of that ability's later
-ranks. Excluded and currently ineligible
-abilities appear grey. Small level labels show the next upgrade, even when it is
-beyond the goal's deadline. Hover an icon
+unlearned upgrade after your current level. Small labels show that upgrade's
+level, even beyond the goal's deadline. Abilities with no later upgrades stay
+visible as **Max** at the end of the grid. Every icon remains clickable, including
+Max abilities and those with unmet prerequisites; only excluded icons turn grey.
+Prerequisites still determine which training costs count, and the tooltip
+explains when they are missing. Observed unpaid older ranks remain in the budget
+without replacing the next-upgrade label. Hover an icon
 for the native full spell tooltip, costs, and selection status. Icons do not use
 checkboxes or separate rank choices.
 

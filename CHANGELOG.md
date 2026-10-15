@@ -6,6 +6,17 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 No changes queued yet.
 
+## 0.4.1 - 2026-10-14
+
+- Make every training ability icon selectable, including abilities with unmet
+  prerequisites and those with no later upgrades. Only excluded icons turn grey.
+- Show the next rank's level after your current level instead of "Now". Keep
+  abilities without later upgrades visible as "Max", sorted after future ranks.
+- Recognize learned higher ranks when checking an ability's quest or talent
+  prerequisite, fixing Sunder Armor eligibility and its training budget.
+- Keep observed unpaid older ranks in expense calculations while showing the
+  upcoming upgrade in the icon and tooltip.
+
 ## 0.4.0 - 2026-10-14
 
 - Added calendar-date and character-play-time goals alongside level goals.

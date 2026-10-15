@@ -39,19 +39,19 @@ function ns.AbilityGroups(goal,classOnly)
             local isAbility=item.source=="class" or item.source=="profession"
             local key=isAbility and item.source .. ":" .. item.name or item.key
             local group=byKey[key]
-            if not group then group={expenses={},cost=0,readOnly=true,included=false}; byKey[key]=group; groups[#groups+1]=group end
+            if not group then group={expenses={},cost=0,readOnly=false,included=false,maxed=false}; byKey[key]=group; groups[#groups+1]=group end
             group.expenses[#group.expenses+1]=item
+            if isAbility then
+                group.included=group.included or item.selected~=false
+                if not group.lastRank or item.level>group.lastRank.level then group.lastRank=item end
+                if not item.paid and item.eligible==false then group.blocked=true end
+                if not item.paid and item.level>level and (not group.expense or item.level<group.requiredLevel) then
+                    group.expense,group.requiredLevel=item,item.level
+                end
+            end
             if not item.paid then
-                if isAbility and item.level>=level then
-                    if not group.ready and (not group.expense or item.level<group.requiredLevel) then
-                        group.expense,group.requiredLevel,group.ready=item,item.level,false
-                    end
-                    if item.eligible~=false then group.readOnly=false; group.included=group.included or item.selected end
-                elseif isAbility and item.priceSource=="trainer quote" then
-                    if not group.ready or item.level<group.expense.level then group.expense,group.requiredLevel,group.ready=item,level,true end
-                    if item.eligible~=false then group.readOnly=false; group.included=group.included or item.selected end
-                elseif not isAbility and item.level<=goal.targetLevel then
-                    group.expense,group.requiredLevel=item,item.level; group.readOnly=false; group.included=group.included or item.selected
+                if not isAbility and item.level<=goal.targetLevel then
+                    group.expense,group.requiredLevel=item,item.level; group.included=group.included or item.selected~=false
                 end
                 local relevant=(not isAbility or item.level>=level or item.priceSource=="trainer quote") and item.level<=goal.targetLevel
                 if relevant and item.eligible~=false then
@@ -61,8 +61,11 @@ function ns.AbilityGroups(goal,classOnly)
         end
     end
     local result={}
-    for _,group in ipairs(groups) do if group.expense then result[#result+1]=group end end
-    table.sort(result,function(a,b) if a.requiredLevel~=b.requiredLevel then return a.requiredLevel<b.requiredLevel end return a.expense.name<b.expense.name end)
+    for _,group in ipairs(groups) do
+        if not group.expense and group.lastRank then group.expense,group.maxed=group.lastRank,true end
+        if group.expense then group.sortLevel=group.requiredLevel or Model.MAX_LEVEL+1; result[#result+1]=group end
+    end
+    table.sort(result,function(a,b) if a.sortLevel~=b.sortLevel then return a.sortLevel<b.sortLevel end return a.expense.name<b.expense.name end)
     return result
 end
 local function showTooltip(button)
@@ -71,11 +74,11 @@ local function showTooltip(button)
     if item.spellID then GameTooltip:SetSpellByID(item.spellID,false,false,true)
     elseif item.link then GameTooltip:SetHyperlink(item.link) else GameTooltip:SetText(item.name) end
     GameTooltip:AddLine(" ")
-    GameTooltip:AddLine(button.ready and ("Available now (required level " .. item.level .. ")") or "Next rank: level " .. button.requiredLevel,1,0.82,0)
+    GameTooltip:AddLine(button.maxed and "Max - no further rank upgrades" or "Next rank: level " .. button.requiredLevel,1,0.82,0)
     GameTooltip:AddLine("Cost through level " .. page.goal.targetLevel .. ": " .. ns.MoneyText(button.cost)
         .. (button.unknown and " (some prices unknown)" or ""),1,1,1)
-    GameTooltip:AddLine(button.readOnly and "Requires its earlier talent or quest ability"
-        or button.included and "Included - click to exclude ability" or "Excluded - click to include ability",1,0.82,0)
+    GameTooltip:AddLine(button.included and "Included - click to exclude ability" or "Excluded - click to include ability",1,0.82,0)
+    if button.blocked then GameTooltip:AddLine("Some ranks need a quest, talent, or race prerequisite before their costs count.",0.7,0.7,0.7,true) end
     if item.priceSource then GameTooltip:AddLine(item.priceSource,0.6,0.6,0.6) end
     GameTooltip:Show()
 end
@@ -102,7 +105,6 @@ function ns.RefreshExpensePlanner()
             local glow=button:GetHighlightTexture(); glow:ClearAllPoints(); glow:SetPoint("TOPLEFT",2,-2); glow:SetPoint("BOTTOMRIGHT",-2,2); glow:SetColorTexture(1,1,1,0.12)
             button.level=UI.Label(button,"",-2,-39,40,"GameFontDisableSmall"); button.level:SetJustifyH("CENTER")
             button:SetScript("OnClick",function(self)
-                if self.readOnly then return end
                 local selected=not self.included
                 for _,item in ipairs(self.expenses) do item.selected=selected end
                 changed(page); ns.RefreshExpensePlanner(); showTooltip(self)
@@ -110,17 +112,17 @@ function ns.RefreshExpensePlanner()
             button:SetScript("OnEnter",showTooltip); button:SetScript("OnLeave",function() GameTooltip:Hide() end)
             page.expenseButtons[index]=button
         end
-        button.unknown,button.ready=group.unknown,group.ready
+        button.unknown,button.maxed,button.blocked,button.requiredLevel=group.unknown,group.maxed,group.blocked,group.requiredLevel
         for field,value in pairs(group) do button[field]=value end
         button:ClearAllPoints(); button:SetPoint("TOPLEFT",6+((index-1)%8)*44,-math.floor((index-1)/8)*54-2)
         button.icon:SetTexture(ns.ExpenseIcon(group.expense))
-        local included=group.included and not group.readOnly
+        local included=group.included
         button.icon:SetDesaturated(not included); local tint=included and 1 or 0.5; button.icon:SetVertexColor(tint,tint,tint)
         button.border:SetColorTexture(included and 0.72 or 0.3,included and 0.55 or 0.3,included and 0.24 or 0.3,1)
-        button.level:SetText(group.ready and "Now" or "Lv " .. group.requiredLevel); button:Show()
+        button.level:SetText(group.maxed and "Max" or "Lv " .. group.requiredLevel); button:Enable(); button:EnableMouse(true); button:Show()
     end
     local rows=math.ceil(#groups/8); page.content:SetHeight(math.max(1,rows*54))
-    page.empty:SetText(#groups==0 and (page.classMode and "No upcoming training at this level." or "Add a purchase below to get started.") or "")
+    page.empty:SetText(#groups==0 and (page.classMode and "No training abilities found for this class." or "Add a purchase below to get started.") or "")
     if page.classMode then
         local grid=math.min(260,math.max(42,rows*54)); page.scroll:SetHeight(grid)
         ns.ResizePage(math.max(230,55+84+grid+46))

@@ -53,9 +53,10 @@ function ns.ClassCatalog()
     local raceID
     if UnitRace then local _, _, id = UnitRace("player"); raceID = id end
     local rows, matched = {}, {}
-    local prerequisites={}
+    local prerequisites,knownAbilities={},{}
     for _,base in ipairs(ns.ClassTrainingData[class] or {}) do
         if base.requiresSpell then prerequisites[base.name]=base.requiresSpell end
+        if known(base.spellID) then knownAbilities[base.name]=true end
     end
     for _, base in ipairs(ns.ClassTrainingData[class] or {}) do
         local entry = {}
@@ -64,7 +65,7 @@ function ns.ClassCatalog()
         entry.name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(base.spellID) or base.name
         entry.paid, entry.priceSource = known(base.spellID), "base price"
         entry.requiresSpell=prerequisites[base.name] or base.requiresSpell
-        entry.eligible = not entry.requiresSpell or known(entry.requiresSpell)
+        entry.eligible = not entry.requiresSpell or known(entry.requiresSpell) or knownAbilities[base.name]==true
         if base.races and raceID then
             local eligibleRace = false
             for _, id in ipairs(base.races) do if id == raceID then eligibleRace = true end end
