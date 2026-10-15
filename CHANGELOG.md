@@ -4,6 +4,10 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 ## Unreleased
 
+No changes queued yet.
+
+## 1.2.1 - 2026-10-15
+
 - Condense the README into installation, quick-start controls, and collapsible
   upgrade instructions for keeping existing goals.
 
