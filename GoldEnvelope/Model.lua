@@ -199,6 +199,16 @@ function Model.TargetAtLevel(goal, level)
     return initial
 end
 
+-- The attained-level target measures progress so far. The next boundary is
+-- the savings target to work toward while playing the current level.
+function Model.LevelPlanStep(goal, level)
+    local boundary=level
+    if level>=(goal.startLevel or level) and level<goal.targetLevel then boundary=level+1 end
+    local target=Model.TargetAtLevel(goal,boundary)
+    return {target=target,addition=math.max(0,target-Model.TargetAtLevel(goal,level)),
+        byLevel=boundary>level and boundary or nil}
+end
+
 function Model.GoalProgress(goal, level)
     local saved = math.min(goal.savedCopper or 0, goal.targetCopper)
     local expected = Model.TargetAtLevel(goal, level)

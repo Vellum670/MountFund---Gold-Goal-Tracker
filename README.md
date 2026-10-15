@@ -17,7 +17,6 @@ and click **Download raw file**.
 Extract it into the Forever client's `Interface/AddOns/` folder.
 The path should end in `AddOns/GoldEnvelope/GoldEnvelope.toc`. Restart
 the client after first installation, enable the addon, and enter `/envelope`.
-The interface version is `16001` (Forever 1.60.1).
 
 ## Savings goals
 
@@ -36,9 +35,7 @@ time**:
 Fields save silently when you leave them; buttons and ability selections save
 immediately. **Escape** saves and closes the window, including a field you are
 still typing in. Incomplete input is kept for reopening without replacing valid
-goal settings. The main window stays 400 UI units wide. With one goal, it is 548
-units tall with tips expanded and 468 with tips collapsed; multiple goals add a
-12-unit totals row. Menus open as pages in this same window, with **Back** on other
+goal settings. Menus open as pages in the same window, with **Back** on other
 pages; short pages shrink to fit their content.
 Savings plans and expense grids also resize when they contain only a few rows.
 Coin amounts use native gold, silver, and copper icons.
@@ -49,7 +46,7 @@ Use the arrows to browse three leveling tips or fifteen level-60 ideas;
 each includes its farming location and selling context. Hover for the full text.
 Use **− / +** beside the tip heading to collapse or expand the text. This preference
 survives reload; browsing and hover details remain available while collapsed.
-Tips switch brackets as you level and also follow `/ge testlevel` previews.
+Tips switch brackets as you level.
 
 Delete a saved goal using **Goals → Delete** beside its entry, or **Delete goal**
 on the main page. This removes its plan and releases its savings allocation;
@@ -62,8 +59,7 @@ saves automatically when selected. Selecting an existing preset opens that goal.
 
 The addon allocates an initial share of your wallet automatically in the
 background, protecting existing goal allocations and upcoming class training.
-Your goal shows saved progress and how far ahead or behind you are; there are no
-initial-investment fields or confirmation steps.
+Your goal shows saved progress and how far ahead or behind you are.
 
 The default **Income-based** level curve puts less saving at low levels and more
 at higher levels. It uses relative quest reward/XP estimates, rather than claiming
@@ -79,20 +75,24 @@ unpaid training and other purchases at their due levels. Hover the expense line
 to see the individual purchases and prices; unknown prices are flagged. Expenses
 are shown for planning and are not deducted again from the goal target or saved
 balance. Time plans show additions and targets by date or play-time hours.
-See [research, data sources, and limitations](docs/economy-research.md).
 
-The main page's **Goal for this level** section shows the selected goal's
-cumulative savings target and **Add this level**, its scheduled increase.
-It updates with your current or test level. Time goals show **Goal for now**
+The main page's **Goal for this level** section shows the cumulative amount to
+aim for before your next level. **Add this level** shows the scheduled increase;
+**By level …** identifies the matching target in the savings plan. Changing the
+savings curve updates these targets immediately, including when you first create
+a goal at your current level. The starting balance and final goal amount stay
+fixed, and changing a curve does not change the money you have saved.
+Time goals show **Goal for now**
 using their calendar or play-time schedule. Training-only goals show the shared
-current-plus-two-level budget. Actual saved progress remains displayed above.
+current-plus-two-level budget. Actual saved progress remains displayed above,
+compared against the checkpoint for the level you have already reached.
 
 ## Actual savings and progress
 
 **Saved** is real money allocated from your wallet. The expected target is shown
 separately, with how far ahead or behind you are. `/ge status` reports your exact
 wallet, each goal's saved amount and progress, and any shared training budget.
-There is no Available figure. Total protected money never exceeds your wallet.
+Total protected money never exceeds your wallet.
 
 After the initial investment, actual incoming money funds active goals after
 leaving room for enabled class training. Level goals fund in order of earliest
@@ -107,9 +107,7 @@ and stop funding it. Checking it again starts funding from zero; the released
 allocation is not restored. Actual gold stays in your wallet. With only one goal,
 the main page shows its progress once rather than repeating aggregate totals.
 
-Old goals migrate to your current level with a safe initial allocation; old
-planned reserves are not treated as money you actually saved. Income received
-while logged out is not retrospectively assigned to goals.
+Income received while logged out is not retrospectively assigned to goals.
 
 ## Goal progress notifications
 
@@ -136,50 +134,14 @@ Press the button again or **Escape** to save its position. Escape also closes th
 menu. The position is saved for this character and adapts to screen resolution;
 **Reset position** returns it to the centered default.
 
-## Protected test commands
-
-These commands stay in final builds and require `Quantum123` as the last
-argument. The password is a guard against accidental use and is visible in the
-addon source. Normal commands such as `/ge status` and `/ge toasts` do not need it.
-
-| Command | Result |
-| --- | --- |
-| `/ge testgold 100 Quantum123` | Set a simulated wallet of 100g. |
-| `/ge testgold 4 87 5 Quantum123` | Set 4g 87s 5c; silver and copper must be 0–99. |
-| `/ge testgold reset Quantum123` | Restore the actual wallet and saved goals. |
-| `/ge testlevel 40 Quantum123` | Simulate any whole level from 1 to 60. |
-| `/ge testlevel reset Quantum123` | Restore the actual level. |
-| `/ge testtoast Quantum123` | Preview the toast without leveling. |
-
-Use `/ge testgold Quantum123` or `/ge testlevel Quantum123` to report the current
-values. Missing or incorrect passwords leave the current state unchanged.
-
-Gold testing creates a session-only copy of your goals. Raising or lowering the
-simulated balance acts like income or spending on that copy, allowing you to try
-ahead, behind, and fully funded states. Repeating the same balance does not add
-savings again. Goal edits, new goals, and ability choices made while gold testing
-is active stay in this copy. Resetting gold restores your original goals and
-editor fields; real income and spending received during testing remain recorded.
-To create a goal that survives reload, run `/ge testgold reset Quantum123`
-first. New goals created with a test wallet disappear when the test session ends.
-
-The window labels the **Test wallet** and **Test level**. Both overrides reset
-on `/reload`, logout, exiting the game, or changing characters and never change
-your actual character level or gold. Real purchases still use the actual wallet
-and saved goals. Using only a test level keeps normal goal edits enabled.
-
-Toast previews use the active test values or current goals, with a clearly
-labeled example if no goals exist. They work while normal notifications are
-disabled and wait until combat ends.
-
 ## Expenses and Class Training
 
-New goals include eligible, unlearned **class training** by default. The bundled
-level 1–60 catalog contains 1,374 spell/rank entries across the nine classes and
-works before visiting a trainer. Existing goals retain their saved choices.
+New goals include eligible, unlearned **class training** by default. Training
+estimates for levels 1–60 are available before visiting a trainer. Existing goals
+retain their saved choices.
 
 Use the **Class training** button in the goal editor to open its ability page.
-The goal appears first. An eight-column grid uses one clickable icon per ability;
+The goal appears first. The grid shows one clickable icon per ability;
 clicking it includes or excludes every rank, including future ranks beyond the
 goal's deadline. Icons adapt to your current class and level, ordered by the next
 unlearned upgrade after your current level. Small labels show that upgrade's
@@ -189,8 +151,7 @@ Max abilities and those with unmet prerequisites; only excluded icons turn grey.
 Prerequisites still determine which training costs count, and the tooltip
 explains when they are missing. Observed unpaid older ranks remain in the budget
 without replacing the next-upgrade label. Hover an icon
-for the native full spell tooltip, costs, and selection status. Icons do not use
-checkboxes or separate rank choices.
+for the full spell tooltip, costs, and selection status.
 
 Each toggle saves immediately. **Back** returns to the goal; **Close** or Escape
 closes the window. Training prices remain assigned to their actual required levels
@@ -210,7 +171,6 @@ adds new observed ranks. Show all trainer filters to capture future and known
 services. Excluded abilities stay excluded when prices refresh or new ranks
 appear. Unknown prices are flagged; the known-cost total cannot guarantee enough
 money for unknown costs.
-See the research document for catalog provenance and eligibility limitations.
 
 Profession Training uses observed profession ranks and recipes. The first known
 riding quote separates an itemized mount's entered budget into a mount allowance
@@ -247,7 +207,7 @@ protected amount, or protected money used refresh the warning. Routine display
 refreshes do not require another confirmation. Closing the merchant, trainer, or auction house
 cancels pending actions. Expired commodity quotes cannot be accepted.
 
-Native UI coverage:
+Supported purchases:
 
 - Vendor right-click and stack-selector quantity purchases.
 - Vendor buyback and repair-all using your own money.
@@ -257,40 +217,4 @@ Native UI coverage:
 This is an advisory guard for these UI actions. Cursor/drag vendor buying,
 single-item repair, mail, trades, flights, auction fees, gossip purchases,
 macros, and other addons' direct purchases are not intercepted. Their money
-changes still reconcile savings. Blizzard purchase APIs are not replaced.
-
-## Validation and packaging
-
-Run `lua tests/run.lua` from the repository with Lua 5.1 or later. Tests cover
-real-money accounting, training prices and exclusions, forward-only plans,
-migration, initial-investment protection, page navigation, time goals, dynamic
-training icons, toast positioning, Escape saving, and purchase guards.
-Run `python3 scripts/package_addon.py` to rebuild and verify
-[the addon-only ZIP](downloads/GoldEnvelope.zip), including its bundled data.
-For new releases, update the TOC version and add a matching dated entry to
-`CHANGELOG.md` before packaging. The build includes these notes in the ZIP and
-requires them for versions after 0.3.1.
-
-Live-client validation remains necessary. Enable `/console scriptErrors 1`,
-create a test goal, and check the compact layout, coin textures, trainer quotes,
-known-spell detection, expense exclusions, level-up costs, and `/ge status`.
-Check field blur and Escape saving, Back navigation, all-rank icon selection,
-full spell tooltips, and training ordering after changing the test level.
-Try both calendar and play-time goals. Exercise purchase
-cancel/confirm, quantity purchases, buyback, repairs, training, and
-auctions. Confirm that repeat warnings stay quiet for two minutes after
-**Spend anyway**, then return when the cooldown expires. Check controller
-behavior and interactions with other addons too.
-Try `/ge testtoast Quantum123` to check the toast's placement, coin glow, progress bars,
-click-through behavior, and fade. Hover during fade-out to check that it becomes
-fully visible and stays open; move away to check the fresh countdown. Check a
-real level-up and its combat deferral too, then verify `/ge toasts` disables
-notifications.
-Log out and back in to check the welcome toast; zoning and `/reload` should not
-show it again.
-Use **Settings → Move toast** to check dragging, saving with a second button
-press or Escape, and restoration after reload or a resolution change.
-
-API references: [Forever merchant UI](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_UIPanels_Game/Mainline/MerchantFrame.lua),
-[trainer UI](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_TrainerUI/Mainline/Blizzard_TrainerUI.lua),
-and [auction UI](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_AuctionHouseUI/Shared/Blizzard_AuctionHouseFrame.lua).
+changes still update your saved progress.

@@ -6,6 +6,16 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 No changes queued yet.
 
+## 0.4.16 - 2026-10-14
+
+- Show the savings target to reach before the next level under Goal for this
+  level, including its scheduled addition and By level checkpoint. Curve
+  changes now show their effect immediately at the goal's starting level.
+- Place the current target amount directly beside its label. Clarify that
+  curve choices change planned targets, while actual saved money stays intact.
+- Keep the README focused on player installation and usage, removing developer
+  commands, testing and packaging instructions, and implementation details.
+
 ## 0.4.15 - 2026-10-14
 
 - Keep an itemized mount's allowance separate from its observed riding fee.

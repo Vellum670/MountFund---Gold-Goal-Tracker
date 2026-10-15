@@ -1679,15 +1679,15 @@ test('main level target follows the selected goal and level preview without chan
     local second=goal(200000,35); second.name='Second goal'; second.curve=1
     ns.db.goals={first,second}; ns.RefreshTestContext()
     equal(ns.ui.levelGoalHeading.text,'Goal for this level')
-    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(10000))
-    equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(0))
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(14000))
+    equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(4000) .. '  - By level 26')
     local original=copyData(ns.db)
     SlashCmdList.GOLDENVELOPE('testlevel 30 Quantum123')
-    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(30000))
-    equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(4000))
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(44000))
+    equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(14000) .. '  - By level 31')
     assert(ns.GetBudget().expected>30000); sameData(ns.db,original)
     click(ns.ui,'Goals'); ns.ui.goalPicker.rows[2].scripts.OnClick()
-    equal(ns.ui.currentPage,'main'); equal(ns.ui.levelGoalAmount.text,ns.MoneyText(100000))
+    equal(ns.ui.currentPage,'main'); equal(ns.ui.levelGoalAmount.text,ns.MoneyText(120000))
     equal(ns.ui.width,400); equal(ns.ui.height,560)
 end)
 
@@ -1699,7 +1699,7 @@ test('main level target stops adding before the start and after the deadline',fu
     equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(0))
     SlashCmdList.GOLDENVELOPE('testlevel 35 Quantum123')
     equal(ns.ui.levelGoalAmount.text,ns.MoneyText(100000))
-    equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(9000))
+    equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(0))
     SlashCmdList.GOLDENVELOPE('testlevel 36 Quantum123')
     equal(ns.ui.levelGoalAmount.text,ns.MoneyText(100000))
     equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(0))
@@ -1745,8 +1745,9 @@ test('main target guides an empty draft and updates after silent editing',functi
     equal(ns.ui.levelGoalDetail.text,'Create or choose a goal to see its target.')
     blur(ns.ui.name,'New savings goal'); blur(ns.ui.amount[1],'5')
     local g=ns.db.goals[1]
-    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(g.initialCopper))
-    equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(0))
+    local target=M.TargetAtLevel(g,26)
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(target))
+    equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(target-g.initialCopper) .. '  - By level 26')
     equal(ns.ui.error.text,'')
 end)
 
@@ -1819,7 +1820,7 @@ test('savings-plan right column matches the selected goal target while changes a
     ns.db.goals={g}; ns.RefreshTestContext(); local mainTarget=ns.ui.levelGoalAmount.text
     local before=copyData(ns.db); click(ns.ui.editor,'Savings plan')
     equal(ns.ui.planChangeHeading.text,'This level'); equal(ns.ui.planTargetHeading.text,'Goal for level')
-    equal(ns.ui.planRows[25].target.text,mainTarget)
+    equal(ns.ui.planRows[26].target.text,mainTarget)
     equal(ns.ui.planRows[25].addition.text,'+ ' .. ns.MoneyText(0))
     for l=25,35 do
         local row=ns.ui.planRows[l]
@@ -2370,6 +2371,68 @@ test('time goals cycle only between steady saving and save more later',function(
     equal(ns.ui.curve.text,'Steady saving')
     ns.ui.curve.scripts.OnClick(); equal(ns.ui.curve.text,'Save more later')
     ns.ui.curve.scripts.OnClick(); equal(ns.ui.curve.text,'Steady saving')
+end)
+
+test('each level curve immediately updates the real starting-level budget and savings-plan targets',function()
+    for _,itemized in ipairs({false,true}) do
+        reset(); local g=goal(1000000,40,25); g.savedCopper=10000
+        if itemized then
+            g.planMode='items'; g.expenses={{key='manual:goal',source='manual',name='Goal cost',level=40,copper=1000000,selected=true}}
+        end
+        ns.db.goals={g}; ns.RefreshTestContext(); local before=copyData(ns.db.goals[1])
+        local cases={{'Income-based',0,55884},{'Steady saving',1,66666},{'Save more later',2,4444}}
+        for _,case in ipairs(cases) do
+            equal(ns.ui.curve.text,case[1]); equal(ns.db.goals[1].curve,case[2])
+            equal(ns.ui.levelGoalAmount.text,ns.MoneyText(case[3]))
+            equal(ns.ui.levelGoalDetail.text,'Add this level ' .. ns.MoneyText(case[3]) .. '  - By level 26')
+            local expected=copyData(before); expected.curve=case[2]; sameData(ns.db.goals[1],expected)
+            click(ns.ui.editor,'Savings plan'); equal(ns.ui.planHeading.text,'By level')
+            equal(ns.ui.planRows[26].target.text,ns.MoneyText(case[3]))
+            equal(ns.ui.planRows[26].addition.text,'+ ' .. ns.MoneyText(case[3]))
+            equal(ns.ui.planRows[25].target.text,ns.MoneyText(0)); equal(ns.ui.planRows[40].target.text,ns.MoneyText(1000000))
+            back(); ns.ui.curve.scripts.OnClick()
+        end
+        equal(ns.db.goals[1].curve,0); equal(ns.db.goals[1].savedCopper,10000); equal(money,48705)
+    end
+end)
+test('resetting a test level restores an actionable budget at the real level and preserves curve changes',function()
+    reset(); local g=goal(1000000,40,25); g.savedCopper=10000; ns.db.goals={g}; ns.RefreshTestContext()
+    SlashCmdList.GOLDENVELOPE('testlevel 30 Quantum123')
+    ns.ui.curve.scripts.OnClick(); ns.ui.curve.scripts.OnClick(); equal(ns.db.goals[1].curve,2)
+    local simulatedTarget=ns.ui.levelGoalAmount.text
+    SlashCmdList.GOLDENVELOPE('testlevel reset Quantum123')
+    equal(ns.GetPlayerLevel(),25); equal(ns.db.goals[1].startLevel,25); equal(ns.db.goals[1].curve,2)
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(4444)); assert(simulatedTarget~=ns.ui.levelGoalAmount.text)
+    equal(ns.ui.planRows[26].target.text,ns.MoneyText(4444))
+    ns.ui.curve.scripts.OnClick(); equal(ns.ui.levelGoalAmount.text,ns.MoneyText(55884))
+    equal(ns.db.goals[1].savedCopper,10000); equal(money,48705)
+end)
+test('current-level planning stops at the deadline and leaves future goals untouched',function()
+    local g=goal(100000,35,25); g.curve=1; g.initialCopper=10000
+    local before=M.LevelPlanStep(g,24); equal(before.target,0); equal(before.addition,0); equal(before.byLevel,nil)
+    local start=M.LevelPlanStep(g,25); equal(start.target,19000); equal(start.addition,9000); equal(start.byLevel,26)
+    local last=M.LevelPlanStep(g,34); equal(last.target,100000); equal(last.addition,9000); equal(last.byLevel,35)
+    for _,current in ipairs({35,36,60}) do
+        local step=M.LevelPlanStep(g,current); equal(step.target,100000); equal(step.addition,0); equal(step.byLevel,nil)
+    end
+end)
+test('time curve changes update both the current target and its plan without changing saved funds',function()
+    reset(); local g=goal(100000,60); g.goalType='played'; g.curve=1
+    g.startPlayed,g.durationSeconds,g.savedCopper=0,7200,10000
+    ns.db.goals={g}; ns.db.playedSeconds=3600; ns.RefreshTestContext()
+    equal(ns.ui.levelGoalAmount.text,ns.MoneyText(50000)); equal(ns.ui.planRows[5].target.text,ns.MoneyText(50000))
+    ns.ui.curve.scripts.OnClick(); equal(ns.ui.levelGoalAmount.text,ns.MoneyText(25000))
+    equal(ns.ui.planRows[5].target.text,ns.MoneyText(25000)); equal(ns.db.goals[1].savedCopper,10000)
+    ns.ui.curve.scripts.OnClick(); equal(ns.ui.levelGoalAmount.text,ns.MoneyText(50000))
+    equal(ns.ui.planRows[5].target.text,ns.MoneyText(50000)); equal(money,48705)
+end)
+test('the current goal amount is anchored just beside its label rather than at the far edge',function()
+    reset(); ns.UsePreset('mount-first')
+    local amount,heading=ns.ui.levelGoalAmount,ns.ui.levelGoalHeading
+    equal(amount.point[1],'LEFT'); equal(amount.point[2],heading); equal(amount.point[3],'RIGHT'); equal(amount.point[4],8)
+    heading.GetStringWidth=function() return 99 end
+    ns.RefreshUI(); equal(heading.width,99); equal(amount.width,261)
+    heading.GetStringWidth=nil
 end)
 
 print(tests .. ' tests passed')

@@ -238,7 +238,7 @@ local function refreshEditorControls()
     ui.selection:SetText(draft.name~="" and draft.name or "New goal")
     local curve=Model.CURVES[draft.curve]
     ui.curve:SetText(curve.name)
-    tooltip(ui.curve,curve.name,curve.description)
+    tooltip(ui.curve,curve.name,curve.description .. " Click to change planned targets and additions. Your actual saved money stays the same.")
     ui.planning:SetText("Additional Expenses")
     local mode=draft.goalType or "level"
     ui.basis:SetText(mode=="date" and "By calendar date" or mode=="played" and "By play time" or "By level")
@@ -254,7 +254,7 @@ local function renderPlan(goal)
     local ui=ns.ui; if not ui.planRows then return end
     for _,row in pairs(ui.planRows) do row:Hide() end
     local timed=Model.IsTimeGoal(goal)
-    ui.planHeading:SetText(timed and "Time progress" or "Level")
+    ui.planHeading:SetText(timed and "Time progress" or "By level")
     ui.planChangeHeading:SetText(timed and "This interval" or "This level")
     ui.planTargetHeading:SetText(timed and "Goal target" or "Goal for level")
     local expenses=not timed and ns.ExpensesByLevel(goal) or {}
@@ -460,22 +460,29 @@ function ns.RefreshUI()
         local g=saved or draft; local progress=Model.GoalProgress(g,ns.GetPlayerLevel())
         local timed=Model.IsTimeGoal(g); local trainingOnly=g.targetCopper==0 and g.includeClassTraining
         ui.levelGoalHeading:SetText(timed and "Goal for now" or "Goal for this level")
+        local headingWidth=ui.levelGoalHeading:GetStringWidth()
+        ui.levelGoalHeading:SetWidth(math.ceil(headingWidth and headingWidth>0 and headingWidth or (timed and 72 or 108)))
+        ui.levelGoalAmount:SetWidth(math.max(1,368-ui.levelGoalHeading:GetWidth()-8))
         if not saved and g.name=="" and g.targetCopper==0 then
             ui.levelGoalAmount:SetText(""); ui.levelGoalDetail:SetText("Create or choose a goal to see its target.")
         else
-            ui.levelGoalAmount:SetText(ns.MoneyText(trainingOnly and budget.trainingDue or progress.expected))
-            if trainingOnly then ui.levelGoalDetail:SetText("Training for the current and next two levels")
-            elseif timed then ui.levelGoalDetail:SetText(g.goalType=="date" and "Based on your calendar deadline" or "Based on logged-in play time")
+            if trainingOnly then
+                ui.levelGoalAmount:SetText(ns.MoneyText(budget.trainingDue))
+                ui.levelGoalDetail:SetText("Training for the current and next two levels")
+            elseif timed then
+                ui.levelGoalAmount:SetText(ns.MoneyText(progress.expected))
+                ui.levelGoalDetail:SetText(g.goalType=="date" and "Based on your calendar deadline" or "Based on logged-in play time")
             else
-                local level=ns.GetPlayerLevel()
-                local addition=level>(g.startLevel or level) and math.max(0,progress.expected-Model.TargetAtLevel(g,level-1)) or 0
-                ui.levelGoalDetail:SetText("Add this level " .. ns.MoneyText(addition))
+                local step=Model.LevelPlanStep(g,ns.GetPlayerLevel())
+                ui.levelGoalAmount:SetText(ns.MoneyText(step.target))
+                ui.levelGoalDetail:SetText("Add this level " .. ns.MoneyText(step.addition)
+                    .. (step.byLevel and "  - By level " .. step.byLevel or ""))
             end
         end
         tooltip(ui.levelGoal,timed and "Goal for now" or "Goal for this level",
             (trainingOnly and "The shared training budget for your current level and the next two levels."
             or timed and "The total amount planned by now on this goal's calendar or play-time schedule."
-            or "The total amount planned to be saved toward this goal by your current level. Add this level shows the scheduled increase.")
+            or "The total amount to aim for before your next level. Add this level is the planned increase from your current-level checkpoint. The Savings plan lists those targets under By level. Actual saved progress compares against the checkpoint already reached.")
             .. (g.active==false and " This goal is not tracked; its savings allocation has been released." or ""))
         if g.active==false then
             ui.progress:SetText("Not tracked - savings allocation released")
@@ -552,8 +559,9 @@ createUI=function()
     local editor=CreateFrame("Frame",nil,main); editor:SetPoint("TOPLEFT",0,-82); editor:SetSize(368,282); ui.editor=editor
     ui.selection=label(editor,"",0,0,368); ui.progress=label(editor,"",0,-19,368,"GameFontHighlightSmall")
     ui.levelGoal=CreateFrame("Frame",nil,editor); ui.levelGoal:SetPoint("TOPLEFT",0,-40); ui.levelGoal:SetSize(368,32); ui.levelGoal:EnableMouse(true)
-    ui.levelGoalHeading=label(ui.levelGoal,"Goal for this level",0,0,180,"GameFontNormalSmall")
-    ui.levelGoalAmount=label(ui.levelGoal,"",184,0,184,"GameFontHighlightSmall"); ui.levelGoalAmount:SetJustifyH("RIGHT")
+    ui.levelGoalHeading=label(ui.levelGoal,"Goal for this level",0,0,108,"GameFontNormalSmall"); ui.levelGoalHeading:SetWordWrap(false)
+    ui.levelGoalAmount=label(ui.levelGoal,"",116,0,252,"GameFontHighlightSmall"); ui.levelGoalAmount:SetJustifyH("LEFT")
+    ui.levelGoalAmount:SetWordWrap(false); ui.levelGoalAmount:ClearAllPoints(); ui.levelGoalAmount:SetPoint("LEFT",ui.levelGoalHeading,"RIGHT",8,0)
     ui.levelGoalDetail=label(ui.levelGoal,"",0,-18,368,"GameFontDisableSmall")
     label(editor,"Name",0,-89,85); ui.name=edit(editor,94,-83,260)
     ui.basis=button(editor,"By level",0,-119,162,function()

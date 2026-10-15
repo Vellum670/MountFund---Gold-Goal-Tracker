@@ -1,7 +1,7 @@
 # Economy research and budgeting assumptions
 
 Research date: October 14, 2026. Economy model introduced in version 0.3.0;
-UI, selection, and scheduling notes updated for version 0.4.15.
+UI, selection, and scheduling notes updated for version 0.4.16.
 
 ## What can be supported by the evidence
 
@@ -50,6 +50,14 @@ and Forever changes. Early quest cash is particularly sparse. Using the weights
 relatively avoids presenting this incomplete proxy as guaranteed copper income.
 Recorded per-character income and spending are observational totals and do not
 automatically retrain this default curve.
+
+The main page's current-level budget shows the target at the next level boundary
+and the planned addition from the attained-level checkpoint. This makes curve
+differences visible at a newly created goal's starting level without moving its
+initial allocation or inventing savings. The By level column in the savings plan
+identifies the corresponding boundary. Ahead/behind progress still compares
+actual allocations against the attained-level checkpoint. At or after the final
+level, the budget remains the final target and the scheduled addition is zero.
 
 ## Class training facts and prices
 
