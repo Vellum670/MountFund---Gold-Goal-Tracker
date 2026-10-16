@@ -22,6 +22,7 @@ Save for mounts and other goals, budget class training, and track progress by le
 
 ## Useful controls
 
+- **Minimap button** — open Mountfund; drag to move or hide it in Settings.
 - **`/mf`** — open Mountfund.
 - **`/mf status`** — chat summary; also appears on login, reload, and goal milestones.
 - **Settings** — warnings, automatic chat summaries, tips, and toast options. Hover a toast to keep it visible.

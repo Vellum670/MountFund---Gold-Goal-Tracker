@@ -34,17 +34,19 @@ local function showPending()
     local pending = ns.pendingLevelUpToast
     if not pending then return end
     ns.pendingLevelUpToast = nil
-    local summary = pending.preview and previewSummary(pending.level) or ns.BuildLevelUpSummary(pending.level)
+    local summary = pending.summary or (pending.preview and previewSummary(pending.level) or ns.BuildLevelUpSummary(pending.level))
     if not summary then ns.HideLevelUpToast(); return end
     summary.reason=pending.reason
     local frame = ns.levelUpToast
     frame.summary, frame.startedAt = summary, GetTime()
+    frame:SetFrameStrata(summary.reason=="completion" and "DIALOG" or "LOW")
     frame.expiresAt=frame.startedAt+DISPLAY_SECONDS
     frame:SetSize(330, 68 + #summary.goals * 62 + (summary.remainingCount > 0 and 16 or 0))
     frame.title:SetText((summary.preview and "Preview: " or "")
-        .. (summary.reason=="login" and "Welcome back!" or "Level " .. summary.level .. "!"))
+        .. (summary.reason=="completion" and "Goal complete!" or summary.reason=="login" and "Welcome back!" or "Level " .. summary.level .. "!"))
     local first = summary.goals[1]
-    frame.cheer:SetText(first.status == "complete" and "Fully funded. Adventure awaits!"
+    frame.cheer:SetText(summary.reason=="completion" and "One goal down. Adventure awaits!"
+        or first.status == "complete" and "Fully funded. Adventure awaits!"
         or first.status == "behind" and (summary.reason=="login" and "A fresh adventure awaits!" or "New level, fresh adventure!")
         or "Keep the coins rolling!")
     for _, row in ipairs(frame.rows) do row:Hide() end
@@ -55,7 +57,9 @@ local function showPending()
         row.detail:SetText(ns.MoneyText(progress.saved) .. " / " .. ns.MoneyText(progress.target)
             .. string.format("  %.0f%%", progress.percent))
         local r, g, b = 0.65, 0.9, 0.65
-        if progress.status == "complete" then
+        if progress.status == "completed" then
+            row.status:SetText("Completed - saved in your goal history"); r, g, b = 1, 0.82, 0.2
+        elseif progress.status == "complete" then
             row.status:SetText("Goal funded!"); r, g, b = 1, 0.82, 0.2
         elseif progress.status == "behind" then
             row.status:SetText("Behind " .. ns.MoneyText(progress.behind)
@@ -100,7 +104,8 @@ local function onUpdate(frame)
         -- Resume with a fresh snapshot after combat, without stacking cards.
         if not ns.pendingLevelUpToast and frame.startedAt then
             ns.pendingLevelUpToast = { level = frame.summary.level, preview = frame.summary.preview,
-                reason=frame.summary.reason, readyAt = GetTime() + 0.5 }
+                reason=frame.summary.reason, summary=frame.summary.reason=="completion" and frame.summary or nil,
+                readyAt = GetTime() + 0.5 }
         end
         frame.startedAt,frame.expiresAt = nil,nil; frame:SetAlpha(0); frame:Hide()
         return
@@ -189,7 +194,20 @@ function ns.FlushLevelUpToast()
     if GetTime() >= pending.readyAt then showPending() end
 end
 
+function ns.QueueGoalCompletedToast(goal,preview)
+    if not preview and not ns.db.levelUpToasts then return end
+    local summary={level=ns.GetPlayerLevel(),preview=preview,reason="completion",remainingCount=0,goals={{
+        name=goal.name,icon=goal.icon or "Interface\\Icons\\INV_Misc_Coin_01",
+        saved=goal.targetCopper,target=goal.targetCopper,percent=100,status="completed",
+    }}}
+    ns.pendingLevelUpToast={level=summary.level,preview=preview,reason="completion",summary=summary,readyAt=GetTime()}
+    ns.FlushLevelUpToast()
+end
+
 function ns.QueueLevelUpToast(level,reason)
+    if ns.pendingLevelUpToast and ns.pendingLevelUpToast.reason=="completion" then return end
+    if ns.levelUpToast and ns.levelUpToast:IsShown() and ns.levelUpToast.summary
+        and ns.levelUpToast.summary.reason=="completion" then return end
     -- The funding confirmation already conveys progress at the same anchor.
     if ns.completionFrame and ns.completionFrame:IsShown() then return end
     if not ns.db.levelUpToasts or not ns.BuildLevelUpSummary(level) then return end

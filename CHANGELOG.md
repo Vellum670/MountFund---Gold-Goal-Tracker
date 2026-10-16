@@ -4,6 +4,19 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 ## Unreleased
 
+## 1.3.4 - 2026-10-16
+
+- Shorten long goal-list labels with ellipses and keep full names on hover.
+  Let the main-page goal title wrap and expand the layout to prevent overlaps.
+
+- Completing a test-wallet goal now updates session-only goal history while
+  leaving real progress untouched; stale test confirmations are rejected.
+- Show a distinct Goal complete notification and a quiet sound after confirmation,
+  separate from funded progress. Preserve completion notifications through combat.
+
+- Add a draggable minimap button to open or close Mountfund. Save its position
+  per character and offer a Show minimap button toggle in Settings.
+
 ## 1.3.3 - 2026-10-16
 
 - Allow manual goal completion when the wallet covers its target, including gold

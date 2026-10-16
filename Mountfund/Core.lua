@@ -458,6 +458,7 @@ local function Initialize()
     ns.db.warningSilenceSeconds = ns.GetWarningSilenceSeconds()
     if ns.db.warnings == nil then ns.db.warnings = true end
     if ns.db.levelUpToasts == nil then ns.db.levelUpToasts = true end
+    if type(ns.db.showMinimapButton) ~= "boolean" then ns.db.showMinimapButton = true end
     ns.db.goals = type(ns.db.goals) == "table" and ns.db.goals or {}
     local valid = {}
     for _, goal in ipairs(ns.db.goals) do
@@ -490,6 +491,7 @@ local function Initialize()
         end
     end
     ns.MigrateTrainingSelections()
+    if ns.RefreshMinimapButton then ns.RefreshMinimapButton() end
     resetStatusClock()
     if ns.RefreshTestContext then ns.RefreshTestContext() end
 end
@@ -505,7 +507,10 @@ end
 frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
     if event == "ADDON_LOADED" and arg == addonName then Initialize() end
     if not ns.db then return end
-    if event == "PLAYER_LOGIN" then StartSession() end
+    if event == "PLAYER_LOGIN" then
+        StartSession()
+        if ns.RefreshMinimapButton then ns.RefreshMinimapButton() end
+    end
     if event == "TIME_PLAYED_MSG" and UnitLevel("player") == 60 and ns.Model.IsInteger(isReloadingUi, 0, ns.Model.MAX_COPPER) then
         ns.db.level60PlayedSeconds = isReloadingUi
         ns.level60StartedAt = not ns.outOfWorld and GetTime() or nil
@@ -530,6 +535,7 @@ frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
     if event=="PLAYER_LEAVING_WORLD" then ns.outOfWorld=true; ns.FlushPlayClock() end
     if (event=="DISPLAY_SIZE_CHANGED" or event=="UI_SCALE_CHANGED") and ns.ApplyToastPosition then ns.ApplyToastPosition() end
     if event == "PLAYER_LOGOUT" then
+        if ns.FinishMinimapDrag then ns.FinishMinimapDrag() end
         -- /reload does not reliably blur the focused edit box before saving
         -- SavedVariables. Flush while the editor still has its original goal
         -- context, including the session-only wallet when testing.
