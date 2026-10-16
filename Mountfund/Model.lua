@@ -6,7 +6,7 @@ ns.Model = Model
 Model.MAX_LEVEL = 60
 Model.MAX_COPPER = 1000000000000
 Model.CURVES = {
-    [0]={name="Income-based",description="Save more as earnings rise with your level."},
+    [0]={name="Income-based",description="Estimate rising earnings with a level-scaled savings curve; actual income varies."},
     [1]={name="Steady saving",description="Add the same amount throughout the goal."},
     [2]={name="Save more later",description="Start gently and increase saving toward the deadline."},
 }
@@ -192,7 +192,7 @@ function Model.Fraction(startLevel, endLevel, level, curve)
     if curve ~= 0 then return ((level - startLevel) / (endLevel - startLevel)) ^ curve end
     local earned, total = 0, 0
     for step = startLevel + 1, endLevel do
-        local weight = ns.IncomeWeights and ns.IncomeWeights[step] or step ^ 3
+        local weight = ns.IncomeWeights and ns.IncomeWeights[step] or (step - 1) ^ 3
         total = total + weight
         if step <= level then earned = earned + weight end
     end

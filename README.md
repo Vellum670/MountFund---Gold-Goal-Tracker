@@ -28,3 +28,5 @@ Save for mounts and other goals, budget class training, and track progress by le
 - **Report bug** beside Close — copy the GitHub link into your browser.
 
 Excluded-ability warnings appear before buying a greyed-out class spell or ability, regardless of protected gold. Disable training protection in Settings to release its reserve and hide training costs. **Spend anyway** silences excluded-ability warnings for two minutes by default; change this in Settings (30 seconds–60 minutes).
+
+Income-based targets estimate rising earnings. Training uses Classic base costs; visiting a trainer captures Forever-specific quotes.

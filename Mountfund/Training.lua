@@ -2,16 +2,31 @@
 local _, ns = ...
 local Model = ns.Model
 
+-- Resolve names and rank text from this client, including Forever overrides.
+local function spellDetails(spellID)
+    local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
+    local rank = C_Spell and C_Spell.GetSpellSubtext and C_Spell.GetSpellSubtext(spellID)
+    if GetSpellInfo and (not name or not rank) then
+        local legacyName, legacyRank = GetSpellInfo(spellID)
+        name, rank = name or legacyName, rank or legacyRank
+    end
+    if type(name) ~= "string" or not name:match("%S") then name = nil end
+    return name, type(rank) == "string" and rank or ""
+end
+
 -- Character-wide choices are keyed by class and ability, never by spell rank.
 local abilityNames, localizedAbilities = {}, {}
 for class, ranks in pairs(ns.ClassTrainingData) do
     abilityNames[class], localizedAbilities[class] = {}, {}
-    for _, rank in ipairs(ranks) do abilityNames[class][rank.spellID] = rank.name end
+    for _, rank in ipairs(ranks) do abilityNames[class][rank.spellID] = spellDetails(rank.spellID) end
 end
 
 function ns.TrainingAbilityKey(expense)
     local class = expense.class
     if not class then local _, playerClass = UnitClass("player"); class = playerClass end
+    if abilityNames[class] and abilityNames[class][expense.spellID] then
+        abilityNames[class][expense.spellID] = spellDetails(expense.spellID) or abilityNames[class][expense.spellID]
+    end
     local name = abilityNames[class] and abilityNames[class][expense.spellID]
         or localizedAbilities[class] and localizedAbilities[class][expense.name] or expense.name
     return class .. ":" .. name
@@ -38,6 +53,22 @@ function ns.InitializeTrainingSelections(extra, real)
     for _, goal in ipairs(real and ns.db.goals or ns.GetGoals()) do inherit(goal) end
     if extra then inherit(extra) end
     return choices
+end
+
+-- Preserve pre-update name keys when client names differ from the old baseline.
+function ns.MigrateTrainingSelections()
+    local choices = ns.db.classTrainingSelections
+    for _, goal in ipairs(ns.db.goals) do
+        for _, expense in ipairs(goal.expenses or {}) do
+            if expense.source == "class" then
+                local class = expense.class
+                if not class then local _, playerClass = UnitClass("player"); class = playerClass end
+                if choices[class .. ":" .. expense.name] == false then
+                    choices[ns.TrainingAbilityKey(expense)] = false
+                end
+            end
+        end
+    end
 end
 
 function ns.SetTrainingAbility(expense, selected, staged)
@@ -108,6 +139,7 @@ end
 
 function ns.ClassCatalog()
     local _, class = UnitClass("player")
+    local faction = UnitFactionGroup and UnitFactionGroup("player")
     local raceID
     if UnitRace then local _, _, id = UnitRace("player"); raceID = id end
     local rows, matched = {}, {}
@@ -137,18 +169,22 @@ function ns.ClassCatalog()
     end
     local prerequisites,knownAbilities={},{}
     for _,base in ipairs(ns.ClassTrainingData[class] or {}) do
-        if base.requiresSpell then prerequisites[base.name]=base.requiresSpell end
-        if known(base.spellID) then knownAbilities[base.name]=true end
+        local name = spellDetails(base.spellID) or ("Spell " .. base.spellID)
+        abilityNames[class][base.spellID] = name
+        if base.requiresSpell then prerequisites[name]=base.requiresSpell end
+        if known(base.spellID) then knownAbilities[name]=true end
     end
     for _, base in ipairs(ns.ClassTrainingData[class] or {}) do
         local entry = {}
         for key, value in pairs(base) do entry[key] = value end
         entry.key, entry.source, entry.class = "class:" .. base.spellID, "class", class
-        entry.name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(base.spellID) or base.name
-        localizedAbilities[class][entry.name] = base.name
-        entry.paid, entry.priceSource = known(base.spellID), "base price"
-        entry.requiresSpell=prerequisites[base.name] or base.requiresSpell
-        entry.eligible = not entry.requiresSpell or known(entry.requiresSpell) or knownAbilities[base.name]==true
+        entry.name, entry.rank = spellDetails(base.spellID)
+        entry.name = entry.name or ("Spell " .. base.spellID)
+        localizedAbilities[class][entry.name] = entry.name
+        entry.paid, entry.priceSource = known(base.spellID), "Classic base price"
+        entry.requiresSpell=prerequisites[entry.name] or base.requiresSpell
+        entry.eligible = not entry.requiresSpell or known(entry.requiresSpell) or knownAbilities[entry.name]==true
+        if base.faction and faction then entry.eligible = entry.eligible and base.faction == faction end
         if base.races and raceID then
             local eligibleRace = false
             for _, id in ipairs(base.races) do if id == raceID then eligibleRace = true end end
@@ -160,13 +196,15 @@ function ns.ClassCatalog()
             quote = quote or candidate
         end
         for _, candidate in ipairs(byName[entry.name .. ":" .. base.level] or {}) do
-            if candidate.rank == base.rank or not candidate.rank or candidate.rank == "" then
+            if candidate.rank == entry.rank or not candidate.rank or candidate.rank == "" then
                 matched[candidate.key] = true
                 quote = quote or candidate
             end
         end
         if quote then
             entry.copper, entry.paid, entry.priceSource = quote.copper, quote.paid or entry.paid, "trainer quote"
+            entry.level = quote.level
+            if quote.rank and quote.rank ~= "" then entry.rank = quote.rank end
             entry.observedAt, entry.trainer = quote.observedAt, quote.trainer
             entry.icon, entry.link = quote.icon, quote.link
         end

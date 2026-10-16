@@ -489,6 +489,7 @@ local function Initialize()
             if type(key) ~= "string" or type(value) ~= "boolean" then ns.db.classTrainingSelections[key] = nil end
         end
     end
+    ns.MigrateTrainingSelections()
     resetStatusClock()
     if ns.RefreshTestContext then ns.RefreshTestContext() end
 end

@@ -4,6 +4,18 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 ## Unreleased
 
+## 1.3.0 - 2026-10-15
+
+- Replace Income-based weights with an authored level-scaled planning curve that
+  lowers early savings targets and assigns more saving to later levels. Existing
+  saved progress and final goal amounts are preserved.
+- Clarify that Income-based targets are estimates rather than measured earnings.
+- Use MIT-licensed What's Training? Vanilla tables for class-training estimates,
+  with spell names and ranks supplied by the game client. Keep shared ability
+  exclusions and let observed trainer costs, levels, and ranks override estimates.
+- Exclude pet-only Hunter training from the player class-training reserve.
+- Include the training data's attribution and MIT license notice in downloads.
+
 - Configure CurseForge GitHub packaging to install the addon directly under
   Mountfund and exclude duplicate downloads, artwork, and repository-only files.
 
