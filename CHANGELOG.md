@@ -4,7 +4,7 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 ## Unreleased
 
-## 1.3.0 - 2026-10-15
+## 1.3.2 - 2026-10-15
 
 - Replace Income-based weights with an authored level-scaled planning curve that
   lowers early savings targets and assigns more saving to later levels. Existing
