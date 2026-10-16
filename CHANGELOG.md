@@ -4,6 +4,9 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 ## Unreleased
 
+- Configure CurseForge GitHub packaging to install the addon directly under
+  Mountfund and exclude duplicate downloads, artwork, and repository-only files.
+
 - Add the selected horse-on-a-gold-coin project icon for the CurseForge listing.
 
 ## 1.2.9 - 2026-10-15

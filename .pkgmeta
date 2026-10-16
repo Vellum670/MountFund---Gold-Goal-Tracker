@@ -1,0 +1,18 @@
+package-as: Mountfund
+enable-nolib-creation: no
+
+ignore:
+  - assets
+  - downloads
+  - dist
+  - README.md
+  - AGENTS.md
+
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+
+# The repository contains the addon in a subfolder. Flatten that folder so
+# installation produces Mountfund/Mountfund.toc, not Mountfund/Mountfund/...
+move-folders:
+  Mountfund/Mountfund: Mountfund
