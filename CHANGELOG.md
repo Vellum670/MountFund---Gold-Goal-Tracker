@@ -4,6 +4,20 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 ## Unreleased
 
+## 1.3.3 - 2026-10-16
+
+- Allow manual goal completion when the wallet covers its target, including gold
+  reserved elsewhere. Confirm and recheck the balance before marking complete.
+
+- Add dotted goal drag handles and a highlighted drop position. Keep reordering
+  stable during background refreshes and cancel drops outside the goal list.
+
+- Keep Savings plan the same size as the main page and use the extra height to
+  show more rows. Keep its opening scroll position within the table bounds.
+
+- Display warning-silence units in a bordered Seconds/Minutes dropdown with a
+  textured arrow and highlighted choices instead of red action buttons.
+
 ## 1.3.2 - 2026-10-15
 
 - Replace Income-based weights with an authored level-scaled planning curve that
