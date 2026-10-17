@@ -14,17 +14,17 @@ function ns.AskGoalPlanning(goal,onYes,onNo)
     if not ns.planningConsent then
         local page=UI.CreatePage("planning","Additional Expenses",240); ns.planningConsent=page
         page.body=UI.Label(page,"",0,0,368,"GameFontHighlightSmall"); page.body:SetSpacing(5)
-        UI.Button(page,"Additional Expenses",0,-128,178,function()
+        page.yesButton=UI.Button(page,"Additional Expenses",0,-128,178,function()
             local callback=page.yes
             if callback then callback() end
         end)
-        UI.Button(page,"Keep simple budget",190,-128,178,function()
+        page.noButton=UI.Button(page,"Keep simple budget",190,-128,178,function()
             local callback=page.no; ns.GoBack(); if callback then callback() end
         end)
     end
     local page=ns.planningConsent; page.yes,page.no=onYes,onNo
     page.body:SetText("Choose individual purchases for " .. (goal.name~="" and goal.name or "this goal")
-        .. "?\n\nClick expense icons to include or exclude purchases, or keep one savings amount.")
+        .. "?\n\nSelect an expense for details. Right-click its icon to include or exclude it, or keep one savings amount.")
     ns.ShowPage("planning")
 end
 local function changed(page)
@@ -40,7 +40,7 @@ function ns.AbilityGroups(goal,classOnly)
             local isAbility=item.source=="class" or item.source=="profession"
             local key=isAbility and item.source .. ":" .. item.name or item.key
             local group=byKey[key]
-            if not group then group={expenses={},cost=0,included=false,maxed=false}; byKey[key]=group; groups[#groups+1]=group end
+            if not group then group={key=key,expenses={},cost=0,included=false,maxed=false}; byKey[key]=group; groups[#groups+1]=group end
             group.expenses[#group.expenses+1]=item
             if isAbility then
                 group.included=group.included or item.selected~=false
@@ -69,6 +69,36 @@ function ns.AbilityGroups(goal,classOnly)
     table.sort(result,function(a,b) if a.sortLevel~=b.sortLevel then return a.sortLevel<b.sortLevel end return a.expense.name<b.expense.name end)
     return result
 end
+local function updateSelectionBorder(button)
+    local selected=button.page.selectedGroupKey==button.key
+    button.selected=selected
+    local red,green,blue=0.3,0.3,0.3
+    if button.included then red,green,blue=0.72,0.55,0.24 end
+    if selected then red,green,blue=1,0.82,0 end
+    button.border:SetColorTexture(red,green,blue,1)
+end
+function ns.SelectPlanningGroup(page,group)
+    if not page then return end
+    local key=type(group)=="table" and group.key or group
+    local selected
+    for _,candidate in ipairs(page.groups or {}) do
+        if candidate.key==key then selected=candidate; break end
+    end
+    page.selectedGroup=selected
+    page.selectedGroupKey=selected and selected.key or nil
+    for _,button in ipairs(page.expenseButtons or {}) do updateSelectionBorder(button) end
+    if ns.OnPlanningSelection then ns.OnPlanningSelection(page,selected) end
+end
+-- The character-sheet host owns the viewport; the grid fills that viewport without resizing its shell.
+function ns.SetPlanningContentWidth(page,width,height)
+    if not page or type(width)~="number" or width~=width or width==math.huge or width<80 then return end
+    page.hostWidth=width
+    page.hostGridHeight=type(height)=="number" and height==height and height~=math.huge and math.max(42,height) or nil
+    page.goalName:SetWidth(width); page.summary:SetWidth(width); page.hint:SetWidth(width)
+    page.manual:SetWidth(width)
+    page.scroll:SetWidth(math.max(62,width-18)); page.content:SetWidth(math.max(60,width-20))
+    ns.RefreshExpensePlanner()
+end
 local function showTooltip(button)
     local item=button.expense; local page=button.page
     GameTooltip:SetOwner(button,"ANCHOR_RIGHT")
@@ -83,7 +113,8 @@ local function showTooltip(button)
         .. (button.unknown and (ability and " (some prices unknown)" or " (price unknown)") or ""),1,1,1)
     end
     local noun=ability and "ability" or "expense"
-    GameTooltip:AddLine((button.included and "Included - click to exclude " or "Excluded - click to include ") .. noun,1,0.82,0)
+    GameTooltip:AddLine("Left-click for details.",0.8,0.8,0.8)
+    GameTooltip:AddLine((button.included and "Included - right-click to exclude " or "Excluded - right-click to include ") .. noun,1,0.82,0)
     if button.blocked then GameTooltip:AddLine("Some ranks need a quest, talent, or race prerequisite before their costs count.",0.7,0.7,0.7,true) end
     if item.priceSource then GameTooltip:AddLine(item.priceSource,0.6,0.6,0.6) end
     GameTooltip:Show()
@@ -123,9 +154,12 @@ function ns.RefreshExpensePlanner()
         page.summary:SetText(page.classMode and "Training protection is off" or ("Goal target " .. ns.MoneyText(page.goal.targetCopper)))
     end
     local className=UnitClass("player")
-    page.hint:SetText(page.classMode and ((className or "Class") .. " - level " .. ns.GetPlayerLevel() .. " - next upgrades") or "Click to include/exclude. x deletes manual expenses.")
+    page.hint:SetText(page.hostWidth and "Left-click for details. Right-click to include or exclude."
+        or page.classMode and ((className or "Class") .. " - level " .. ns.GetPlayerLevel() .. " - next upgrades")
+        or "Select for details. Right-click to include/exclude. x deletes manual expenses.")
     page.expenseButtons=page.expenseButtons or {}; for _,button in ipairs(page.expenseButtons) do button:Hide() end
-    local groups=ns.AbilityGroups(page.goal,page.classMode)
+    local groups=ns.AbilityGroups(page.goal,page.classMode); page.groups=groups
+    local columns=math.max(1,math.floor(((page.hostWidth and page.content:GetWidth() or 352)+2)/44))
     for index,group in ipairs(groups) do
         local button=page.expenseButtons[index]
         if not button then
@@ -136,7 +170,10 @@ function ns.RefreshExpensePlanner()
             button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square","BLEND")
             local glow=button:GetHighlightTexture(); glow:ClearAllPoints(); glow:SetPoint("TOPLEFT",2,-2); glow:SetPoint("BOTTOMRIGHT",-2,2); glow:SetColorTexture(1,1,1,0.12)
             button.level=UI.Label(button,"",-2,-39,40,"GameFontDisableSmall"); button.level:SetJustifyH("CENTER")
-            button:SetScript("OnClick",function(self)
+            button:RegisterForClicks("LeftButtonUp","RightButtonUp")
+            button:SetScript("OnClick",function(self,mouseButton)
+                ns.SelectPlanningGroup(page,self.key)
+                if mouseButton~="RightButton" then return end
                 local selected=not self.included
                 if page.classMode then ns.SetTrainingAbility(self.expense, selected, page.goal) end
                 for _,item in ipairs(self.expenses) do item.selected=selected end
@@ -159,16 +196,22 @@ function ns.RefreshExpensePlanner()
             button.deleteExpense:SetScript("OnLeave",function() GameTooltip:Hide() end)
         end
         if button.deleteExpense then button.deleteExpense:SetShown(deletable) end
-        button:ClearAllPoints(); button:SetPoint("TOPLEFT",6+((index-1)%8)*44,-math.floor((index-1)/8)*54-2)
+        button:ClearAllPoints(); button:SetPoint("TOPLEFT",6+((index-1)%columns)*44,-math.floor((index-1)/columns)*54-2)
         button.icon:SetTexture(ns.ExpenseIcon(group.expense))
         local included=group.included
         button.icon:SetDesaturated(not included); local tint=included and 1 or 0.5; button.icon:SetVertexColor(tint,tint,tint)
-        button.border:SetColorTexture(included and 0.72 or 0.3,included and 0.55 or 0.3,included and 0.24 or 0.3,1)
+        updateSelectionBorder(button)
         button.level:SetText(group.maxed and "Max" or "Lv " .. group.requiredLevel); button:Enable(); button:EnableMouse(true); button:Show()
     end
-    local rows=math.ceil(#groups/8); page.content:SetHeight(math.max(1,rows*54))
+    local rows=math.ceil(#groups/columns); page.content:SetHeight(math.max(1,rows*54))
     page.empty:SetText(#groups==0 and (page.classMode and "No training abilities found for this class." or "Add a purchase below to get started.") or "")
-    if page.classMode then
+    local selectedKey=page.selectedGroupKey
+    local found=false
+    for _,group in ipairs(groups) do if group.key==selectedKey then found=true; break end end
+    ns.SelectPlanningGroup(page,found and selectedKey or (groups[1] and groups[1].key))
+    if page.hostWidth then
+        page.scroll:SetHeight(page.hostGridHeight or math.max(42,rows*54))
+    elseif page.classMode then
         local grid=math.min(260,math.max(42,rows*54)); page.scroll:SetHeight(grid)
         ns.ResizePage(math.max(230,55+84+grid+46))
     else
@@ -218,11 +261,11 @@ function ns.OpenExpensePlanner(goal,onChange,classOnly)
         page.content=CreateFrame("Frame",nil,page.scroll); page.content:SetSize(352,1); page.scroll:SetScrollChild(page.content)
         page.empty=UI.Label(page.content,"",0,-4,350,"GameFontHighlightSmall")
         page.manual=CreateFrame("Frame",nil,page); page.manual:SetSize(368,82)
-        UI.Label(page.manual,"Add or update a purchase",0,0,268,"GameFontNormalSmall")
+        page.manualHeading=UI.Label(page.manual,"Add or update a purchase",0,0,268,"GameFontNormalSmall")
         page.expenseName=UI.Edit(page.manual,6,-22,226,""); page.expenseLevel=UI.Edit(page.manual,290,-22,64,"",true)
-        UI.Label(page.manual,"Due level",290,-6,64,"GameFontNormalSmall")
+        page.manualLevelLabel=UI.Label(page.manual,"Due level",290,-6,64,"GameFontNormalSmall")
         page.expenseAmount=UI.Coins(page.manual,6,-58)
-        UI.Button(page.manual,"New cost",226,-58,128,function()
+        page.manualNewButton=UI.Button(page.manual,"New cost",226,-58,128,function()
             -- Keep invalid input and its error visible until it is corrected.
             if saveManual(page) == false then return end
             page.manualKey=nil; page.expenseName:SetText(""); UI.SetCoins(page.expenseAmount,0)

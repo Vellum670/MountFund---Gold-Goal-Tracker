@@ -4,6 +4,18 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 ## Unreleased
 
+- Add a Mountfund tab to the Forever character sheet, with Goals, Savings plan,
+  and Class training pages, native game icons, and a standalone fallback for
+  unsupported character-sheet replacements.
+- Put settings and the copyable bug-report link behind icons on the tab row.
+  Show setting explanations beside the controls on hover and after changes.
+- Keep goal priorities draggable, show preset choices on the left, and create
+  new goals explicitly while existing goals continue saving edits automatically.
+- Select training and expense details with left-click; right-click includes or
+  excludes them. Keep shared training choices and unfinished input intact.
+- Keep gold tips visible at the bottom with a saved collapse preference, and
+  contain long names, lists, and forms within scrolling panes.
+
 ## 1.3.4 - 2026-10-16
 
 - Shorten long goal-list labels with ellipses and keep full names on hover.

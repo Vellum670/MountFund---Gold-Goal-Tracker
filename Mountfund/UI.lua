@@ -62,6 +62,7 @@ local function coins(parent, x, y)
         icon:SetSize(iconSize, iconSize)
         icon:SetPoint("LEFT",controls[i],"RIGHT",gap,0)
         icon:SetTexture(coinTextures[i])
+        controls[i].coinIcon=icon
         controls[i]:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
             GameTooltip:SetText(part)
@@ -105,6 +106,7 @@ local function window(name, width, height, title)
     divider:SetPoint("TOPRIGHT", -8, -44)
     divider:SetHeight(1)
     divider:SetColorTexture(0.65, 0.48, 0.22, 0.65)
+    frame.header,frame.divider=header,divider
     frame:EnableMouse(true)
     frame:SetMovable(true)
     frame:RegisterForDrag("LeftButton")
@@ -135,7 +137,11 @@ local function makePage(key,title,height)
     return page
 end
 function ns.EnsureUI()
-    if not ns.ui then createUI(); showEditor(); ns.ShowMainPage() end
+    if not ns.ui then
+        createUI()
+        if ns.SetupCharacterUI then ns.SetupCharacterUI(ns.ui) end
+        showEditor(); ns.ShowMainPage()
+    end
     return ns.ui
 end
 function ns.UI.CreatePage(key,title,height)
@@ -144,6 +150,7 @@ function ns.UI.CreatePage(key,title,height)
 end
 function ns.ResizePage(height)
     local ui=ns.ui
+    if ui.characterMode then return end
     local left,top=ui:GetLeft(),ui:GetTop()
     ui:SetHeight(height)
     if left and top then ui:ClearAllPoints(); ui:SetPoint("TOPLEFT",UIParent,"BOTTOMLEFT",left,top) end
@@ -179,6 +186,7 @@ function ns.SaveAllFields(onlyPending)
 end
 function ns.ShowPage(key,replace)
     ns.EnsureUI()
+    if ns.ui.characterMode then return ns.ShowCharacterPage(key,replace) end
     local ui=ns.ui; local page=assert(ui.pages[key],"Unknown page: " .. key)
     if ui.currentPage==key then return end
     ns.SaveAllFields()
@@ -204,6 +212,7 @@ end
 function ns.CloseUI()
     if ns.ui then ns.SaveAllFields() end
     if ns.FinishToastMove then ns.FinishToastMove() end
+    if ns.CloseCharacterPanel and ns.CloseCharacterPanel() then return end
     if ns.ui then ns.ui:Hide() end
 end
 local function storeInputDraft()
@@ -335,6 +344,12 @@ showEditor=function(updated,restore)
     end
     if ns.ClosePlanningWindows then ns.ClosePlanningWindows() end
     local saved=ns.GetGoals()[selected]
+    if ui.characterMode then
+        ui.creatingGoal=saved==nil
+        if ui.characterUI and (ui.selectedGoalIndex~=selected or updated and not restore) then
+            ui.characterUI.right.scroll:SetVerticalScroll(0)
+        end
+    end
     ui.selectedGoalIndex=selected
     draft=updated or (saved and copyGoal(saved)) or {name="",goalType="level",targetLevel=math.min(60,math.max(40,ns.GetPlayerLevel()+1)),
         targetCopper=0,curve=0,active=true,milestones={},expenses={},initialPercent=20,includeClassTraining=true}
@@ -363,6 +378,12 @@ saveCurrentGoal=function()
     if not draft or ns.ui.updatingEditor then return end
     local goal,err=readEditor()
     if not goal then storeInputDraft(); ns.ui.error:SetText(err); return false end
+    -- New goals stay drafts until Create; existing goals keep silent autosave.
+    if ns.ui.characterMode and ns.ui.creatingGoal and not ns.ui.committingGoal then
+        draft=goal; storeInputDraft(); refreshEditorControls()
+        ns.ui.error:SetText("")
+        return true
+    end
     if ns.TransferCompletionNotice then ns.TransferCompletionNotice(ns.GetGoals()[selected],goal) end
     ns.GetGoals()[selected]=goal; Model.Reconcile(ns.GetGoals(),ns.GetPlayerMoney())
     draft=copyGoal(goal)
@@ -414,7 +435,12 @@ function ns.UsePreset(id)
         if goal.presetID==id then selected=index; showEditor(); ns.ShowMainPage(); return end
     end
     local goal=ns.NewPresetGoal(id); if not goal then return end
-    selected=#ns.GetGoals()+1; showEditor(goal); saveCurrentGoal(); ns.ShowMainPage()
+    selected=#ns.GetGoals()+1; showEditor(goal)
+    ns.ui.committingGoal=true
+    local saved=saveCurrentGoal()
+    ns.ui.committingGoal=nil
+    if saved then ns.ui.creatingGoal=false end
+    ns.ShowMainPage()
 end
 local function planCurrentGoal()
     local goal,err=readEditor(true); if not goal then ns.ui.error:SetText(err); return end
@@ -428,6 +454,33 @@ end
 function ns.CatalogChanged()
     if draft then ns.SyncExpenses(draft); if draft.planMode=="items" then setCoins(ns.ui.amount,draft.targetCopper) end end
     ns.RefreshUI(); if ns.RefreshExpensePlanner then ns.RefreshExpensePlanner() end
+end
+function ns.SelectGoal(index)
+    if not ns.GetGoals()[index] then return end
+    ns.SaveAllFields(); selected=index; ns.ui.creatingGoal=false
+    showEditor(); ns.ShowMainPage()
+end
+function ns.BeginGoalDraft(presetID)
+    ns.EnsureUI(); ns.SaveAllFields()
+    local goal=presetID and ns.NewPresetGoal(presetID) or nil
+    if presetID and not goal then return end
+    selected=#ns.GetGoals()+1; ns.ui.creatingGoal=true
+    showEditor(goal); storeInputDraft(); ns.ShowMainPage()
+end
+function ns.CommitGoalDraft()
+    if not ns.ui or not ns.ui.creatingGoal then return end
+    ns.ui.committingGoal=true
+    local saved=saveCurrentGoal()
+    ns.ui.committingGoal=nil
+    if saved then ns.ui.creatingGoal=false; ns.RefreshUI() end
+    return saved
+end
+function ns.CancelGoalDraft()
+    if not ns.ui or not ns.ui.creatingGoal then return end
+    local buffers=ns.testMoneyCopper~=nil and ns or ns.db
+    buffers[ns.testMoneyCopper~=nil and "testEditorDraft" or "editorDraft"]=nil
+    ns.ui.creatingGoal=false; selected=math.max(1,#ns.GetGoals())
+    showEditor(); ns.ShowMainPage()
 end
 local OVERVIEW_MAX_HEIGHT = 180
 
@@ -611,6 +664,10 @@ end
 
 local function layoutMainPage()
     local ui=ns.ui; if not ui or not ui.goldTipToggle then return end
+    if ui.characterMode then
+        if ns.LayoutCharacterUI then ns.LayoutCharacterUI() end
+        return
+    end
     local titleHeight=ui.selection:GetStringHeight()
     local titleExtra=math.max(0,math.ceil(titleHeight or 14)-14)
     ui.progress:ClearAllPoints(); ui.progress:SetPoint("TOPLEFT",0,-(19+titleExtra))
@@ -659,7 +716,7 @@ function ns.RefreshUI()
     local budget = status.budget
     ui.training:SetShown(not ns.ClassTrainingRetired())
     if ns.ClassTrainingRetired() and ui.currentPage == "training" then ns.ClosePlanningWindows() end
-    refreshGoalOverview(status)
+    if not ui.characterMode then refreshGoalOverview(status) end
     refreshGoldTips()
     local summary=(ns.testMoneyCopper~=nil and "Test wallet " or "Wallet ") .. ns.MoneyText(budget.balance)
         .. (ns.testPlayerLevel and "  [Test level " .. ns.testPlayerLevel .. "]" or "")
@@ -712,6 +769,7 @@ function ns.RefreshUI()
     if ns.RefreshMinimapButton then ns.RefreshMinimapButton() end
     if refreshGoalList then refreshGoalList() end
     if ns.RefreshExpensePlanner then ns.RefreshExpensePlanner() end
+    if ns.RefreshCharacterUI then ns.RefreshCharacterUI(status) end
 end
 local function clearGoalDrag(picker)
     if picker.drag then picker.drag.row:SetAlpha(1) end
@@ -858,9 +916,10 @@ function ns.OpenBugReport()
         page = makePage("bugreport", "Report a bug", 250)
         local intro = label(page, "Copy this link into your browser to report a Mountfund bug on GitHub.",
             0, 0, 368, "GameFontHighlightSmall")
+        page.intro=intro
         intro:SetHeight(40)
         intro:SetWordWrap(true)
-        label(page, "GitHub bug report link", 0, -55, 368, "GameFontNormalSmall")
+        page.caption=label(page, "GitHub bug report link", 0, -55, 368, "GameFontNormalSmall")
         page.link = edit(page, 6, -76, 356, ns.BUG_REPORT_URL)
         page.link:SetMaxLetters(0)
         page.link:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
@@ -878,6 +937,7 @@ function ns.OpenBugReport()
         local help = label(page,
             "Press Ctrl+C to copy, then paste into your browser. Sign in to GitHub, describe the problem and steps to reproduce, and submit the issue there.",
             0, -115, 368, "GameFontHighlightSmall")
+        page.help=help
         help:SetHeight(65)
         help:SetWordWrap(true)
         page:SetScript("OnHide", function() page.link:ClearFocus() end)
@@ -914,18 +974,18 @@ local function settingsPage()
     if ns.ui.pages.settings then ns.ShowPage("settings"); return end
     local page=makePage("settings","Settings",576)
     ns.ui.warnings=CreateFrame("CheckButton",nil,page,"UICheckButtonTemplate"); ns.ui.warnings:SetPoint("TOPLEFT",0,-2)
-    label(page,"Enable excluded-ability warnings",34,-10,332,"GameFontHighlightSmall")
-    label(page,"Warn before buying a greyed-out class spell or ability.",34,-34,325,"GameFontDisableSmall")
+    ns.ui.warningsLabel=label(page,"Enable excluded-ability warnings",34,-10,332,"GameFontHighlightSmall")
+    ns.ui.warningsHelp=label(page,"Warn before buying a greyed-out class spell or ability.",34,-34,325,"GameFontDisableSmall")
     tooltip(ns.ui.warnings,"Excluded-ability warnings","Warns when buying a greyed-out class ability, regardless of protected gold. Enabled abilities and other purchases do not show this warning.")
     ns.ui.warnings:SetScript("OnClick",function(self) ns.db.warnings=self:GetChecked() and true or false; ns.CancelPurchase(); ns.UpdateWarningControls() end)
-    label(page,"Silence excluded-ability warnings after Spend anyway",0,-80,368,"GameFontHighlightSmall")
+    ns.ui.warningDurationLabel=label(page,"Silence excluded-ability warnings after Spend anyway",0,-80,368,"GameFontHighlightSmall")
     local seconds = ns.GetWarningSilenceSeconds()
     ns.ui.warningDurationUnit = seconds % 60 == 0 and 60 or 1
     ns.ui.warningDuration = edit(page,0,-105,70,tostring(seconds / ns.ui.warningDurationUnit),false)
     ns.ui.warningDuration:SetScript("OnEditFocusLost",ns.SaveWarningSilence)
     ns.ui.warningDurationError = label(page,"",0,-160,368,"GameFontHighlightSmall")
     ns.ui.warningDurationError:SetTextColor(1,0.65,0.35)
-    label(page,"Allowed: 30 seconds–60 minutes",0,-138,368,"GameFontDisableSmall")
+    ns.ui.warningDurationHelp=label(page,"Allowed: 30 seconds–60 minutes",0,-138,368,"GameFontDisableSmall")
     local choices = CreateFrame("Frame",nil,page,"BackdropTemplate")
     choices:SetPoint("TOPLEFT",80,-131); choices:SetSize(130,60)
     choices:SetFrameLevel(page:GetFrameLevel()+10)
@@ -974,12 +1034,12 @@ local function settingsPage()
     page:SetScript("OnHide",function() choices:Hide() end)
     ns.UpdateWarningControls()
     ns.ui.toastToggle=CreateFrame("CheckButton",nil,page,"UICheckButtonTemplate"); ns.ui.toastToggle:SetPoint("TOPLEFT",0,-187)
-    label(page,"Show goal progress notifications",34,-195,332,"GameFontHighlightSmall")
+    ns.ui.toastLabel=label(page,"Show goal progress notifications",34,-195,332,"GameFontHighlightSmall")
     tooltip(ns.ui.toastToggle,"Goal progress notifications","Show goal progress on login, level-up, and confirmed completion. Zoning and UI reloads do not trigger a notification.")
     ns.ui.toastToggle:SetScript("OnClick",function(self) ns.db.levelUpToasts=self:GetChecked() and true or false; if not ns.db.levelUpToasts then ns.HideLevelUpToast() end end)
     ns.ui.moveToast=button(page,"Move toast",0,-240,230,function() ns.ToggleToastMove() end)
-    button(page,"Reset position",238,-240,130,function() ns.ResetToastPosition() end)
-    label(page,"Drag the preview. Escape or pressing Move toast again saves its position.",0,-276,368,"GameFontHighlightSmall")
+    ns.ui.resetToast=button(page,"Reset position",238,-240,130,function() ns.ResetToastPosition() end)
+    ns.ui.moveToastHelp=label(page,"Drag the preview. Escape or pressing Move toast again saves its position.",0,-276,368,"GameFontHighlightSmall")
     ns.ui.summarySettings = {}
     for index,setting in ipairs({
         {key="loginChatSummaries",text="Chat summary on login or reload",help="Show your goal summary once when logging in or reloading. Zoning does not trigger it."},
@@ -991,22 +1051,23 @@ local function settingsPage()
         local y = -318-(index-1)*32
         local control = CreateFrame("CheckButton",nil,page,"UICheckButtonTemplate")
         control:SetPoint("TOPLEFT",0,y)
-        label(page,setting.text,34,y-8,332,"GameFontHighlightSmall")
+        local caption=label(page,setting.text,34,y-8,332,"GameFontHighlightSmall")
         tooltip(control,setting.text,setting.help)
         control:SetScript("OnClick",function(self)
             ns.db[setting.key] = self:GetChecked() and true or false
             if setting.key=="trainingProtection" then ns.CancelPurchase() end
             ns.RefreshUI()
         end)
-        ns.ui.summarySettings[index] = {key=setting.key,control=control}
+        ns.ui.summarySettings[index] = {key=setting.key,control=control,label=caption,text=setting.text,help=setting.help}
     end
     ns.RefreshUI(); ns.ShowPage("settings")
 end
+function ns.OpenSettings() settingsPage() end
 createUI=function()
     local ui=window("MountfundWindow",400,560,"Mountfund"); ns.ui=ui
     ui.pages,ui.history={},{}
     ui.error=label(ui,"",16,0,368,"GameFontHighlightSmall"); ui.error:ClearAllPoints(); ui.error:SetPoint("BOTTOMLEFT",16,12); ui.error:SetTextColor(1,0.65,0.35)
-    button(ui,"Close",326,-14,60,ns.CloseUI)
+    ui.close=button(ui,"Close",326,-14,60,ns.CloseUI)
     ui.reportBug = button(ui, "Report bug", 226, -14, 92, ns.OpenBugReport)
     tooltip(ui.reportBug, "Report a bug", "Copy the GitHub issue link to report a problem in your browser.")
     ui.back=button(ui,"Back",16,-14,70,ns.GoBack); ui.back:Hide()
@@ -1029,7 +1090,7 @@ createUI=function()
     ui.levelGoalAmount:SetWordWrap(false); ui.levelGoalAmount:ClearAllPoints(); ui.levelGoalAmount:SetPoint("LEFT",ui.levelGoalHeading,"RIGHT",8,0)
     ui.levelGoalDetail=label(ui.levelGoal,"",0,-18,368,"GameFontDisableSmall")
     local fields=CreateFrame("Frame",nil,editor); fields:SetPoint("TOPLEFT"); fields:SetSize(368,282); ui.editorFields=fields
-    label(fields,"Name",0,-89,85); ui.name=edit(fields,94,-83,260)
+    ui.nameLabel=label(fields,"Name",0,-89,85); ui.name=edit(fields,94,-83,260)
     ui.basis=button(fields,"By level",0,-119,162,function()
         local mode=draft.goalType or "level"
         draft.goalType=mode=="level" and "date" or mode=="date" and "played" or "level"
@@ -1047,9 +1108,9 @@ createUI=function()
     ui.basisIndicator:SetPoint("RIGHT",-8,0); ui.basisIndicator:SetText(">")
     tooltip(ui.basis,"Change goal type","Click to cycle: Level > Calendar date > Play time.")
     ui.level=edit(fields,180,-119,174,"40")
-    label(fields,"Goal amount",0,-161,90); ui.amount=coins(fields,94,-155)
+    ui.amountLabel=label(fields,"Goal amount",0,-161,90); ui.amount=coins(fields,94,-155)
     ui.active=CreateFrame("CheckButton",nil,fields,"UICheckButtonTemplate"); ui.active:SetPoint("TOPLEFT",-4,-188)
-    label(fields,"Track this goal",30,-197,164,"GameFontHighlightSmall"); ui.active:SetScript("OnClick",saveCurrentGoal)
+    ui.trackLabel=label(fields,"Track this goal",30,-197,164,"GameFontHighlightSmall"); ui.active:SetScript("OnClick",saveCurrentGoal)
     tooltip(ui.active,"Track this goal","Unchecking releases this goal's saved allocation and stops funding it. Checking again starts funding from zero; it does not restore the released amount. Your actual gold stays in your wallet.")
     ui.training=button(fields,"Class training",186,-189,182,planClassTraining)
     ui.curve=button(fields,"Income-based",0,-223,178,function()
@@ -1057,7 +1118,7 @@ createUI=function()
         refreshEditorControls(); saveCurrentGoal()
     end)
     ui.planning=button(fields,"Additional Expenses",186,-223,182,planCurrentGoal)
-    button(fields,"Savings plan",0,-257,178,function() ns.ShowPage("plan") end)
+    ui.savingsPlan=button(fields,"Savings plan",0,-257,178,function() ns.ShowPage("plan") end)
     ui.complete=button(fields,"Complete",186,-257,88,function()
         ns.SaveAllFields()
         local goal=ns.GetGoals()[selected]
@@ -1084,7 +1145,7 @@ createUI=function()
     tooltip(ui.goldTipNext,"Next gold tip","Browse gold-making ideas for your current level bracket.")
     local goals=makePage("goals","Your goals",340); ui.goalPicker=goals
     goals.scroll=CreateFrame("ScrollFrame",nil,goals,"UIPanelScrollFrameTemplate"); goals.scroll:SetPoint("TOPLEFT",0,-32); goals.scroll:SetSize(354,240)
-    label(goals,"Drag the dotted handles: top goals receive savings first.",0,0,350,"GameFontHighlightSmall")
+    goals.instructions=label(goals,"Drag the dotted handles: top goals receive savings first.",0,0,350,"GameFontHighlightSmall")
     goals.history=button(goals,"Completed history",0,-280,170,function() ns.db.completedHistoryExpanded=not ns.db.completedHistoryExpanded; ns.RefreshUI() end)
     goals.content=CreateFrame("Frame",nil,goals.scroll); goals.content:SetSize(350,1); goals.scroll:SetScrollChild(goals.content)
     goals.empty=label(goals.content,"",0,0,350,"GameFontHighlightSmall")
@@ -1127,12 +1188,22 @@ createUI=function()
     ui.goldTipsOpened=ui:IsShown()
 end
 function ns.ToggleUI()
+    -- Queue the native page before creating any standalone controls in combat.
+    if not ns.ui and InCombatLockdown and InCombatLockdown()
+        and ns.OpenCharacterPanel and ns.OpenCharacterPanel() then return end
     local existing=ns.ui
     ns.EnsureUI()
-    if existing and ns.ui:IsShown() then ns.CloseUI() else
+    local visible=ns.ui:IsShown()
+    if ns.ui.IsVisible then visible=ns.ui:IsVisible() end
+    if existing and visible then ns.CloseUI() else
         local pending=ns.testMoneyCopper~=nil and ns.testEditorDraft or ns.db.editorDraft
         if pending then selected=pending.index; showEditor(copyGoal(pending.goal),pending) end
-        ns.RefreshUI(); ns.ui:Show()
+        if pending and ns.ui.characterMode then ns.ui.creatingGoal=ns.GetGoals()[selected]==nil end
+        ns.RefreshUI()
+        if not (ns.OpenCharacterPanel and ns.OpenCharacterPanel()) then
+            if ns.DetachCharacterPanel then ns.DetachCharacterPanel(ns.ui) end
+            ns.ui:Show()
+        end
     end
 end
 

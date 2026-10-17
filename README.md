@@ -11,22 +11,20 @@ Save for mounts and other goals, budget class training, and track progress by le
 
 ## Get started
 
-- Choose **New** or **Presets**, set an amount, and click the deadline button to cycle between level, date, and play time.
-- Drag goals on **Goals** to set funding priority. Remaining savings targets automatically adjust to shortfalls or surplus; completed history starts collapsed.
-- **All goals** shows savings and grouped targets. Click a goal to edit it; hover for details.
-- **Class training** protects upcoming costs. Click ability icons to include/exclude them across all goals; grey means excluded. Trainer visits update price estimates.
-- Fully funded goals offer **Mark complete** or **Later**. Completion releases the allocation and keeps the goal; your gold stays in your wallet.
-- Use **Additional Expenses** for other purchases and **Savings plan** for your schedule.
+- Open the **Mountfund character-sheet tab**, minimap button, or **`/mf`**.
+- Choose **New goal** or **Presets**, set an amount and deadline, then **Create goal**. Existing goals save edits automatically.
+- Drag the dotted goal handles to set funding priority. Targets adjust to shortfalls or surplus; completed history starts collapsed.
+- **Savings plan** shows your schedule. **Additional Expenses** adds individual purchases.
+- In **Class training**, left-click an ability for details; right-click to include/exclude it across all goals. Grey means excluded. Trainer visits update estimates.
+- Funded goals offer **Mark complete** or **Later**. Confirming completion releases the allocation and keeps the goal in history.
 
-**Edits save automatically. Escape saves and closes.** Savings stay in your wallet; spending can reduce progress. Unchecking **Track this goal** releases its saved allocation.
+**Gold stays in your wallet; spending can reduce progress.** Unchecking **Track this goal** releases its allocation. Escape saves and closes.
 
 ## Useful controls
 
-- **Minimap button** — open Mountfund; drag to move or hide it in Settings.
-- **`/mf`** — open Mountfund.
-- **`/mf status`** — chat summary; also appears on login, reload, and goal milestones.
-- **Settings** — warnings, automatic chat summaries, tips, and toast options. Hover a toast to keep it visible.
-- **Report bug** beside Close — copy the GitHub link into your browser.
+- **`/mf`** — open Mountfund; **`/mf status`** — chat summary.
+- **Cogwheel** — warnings, training protection, summaries, tips, minimap, and toast options. Hover a toast to keep it visible.
+- **Bug icon** — copy the GitHub issue link into your browser.
 
 Excluded-ability warnings appear before buying a greyed-out class spell or ability, regardless of protected gold. Disable training protection in Settings to release its reserve and hide training costs. **Spend anyway** silences excluded-ability warnings for two minutes by default; change this in Settings (30 seconds–60 minutes).
 

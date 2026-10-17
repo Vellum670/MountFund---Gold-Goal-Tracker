@@ -17,3 +17,5 @@ Toasts.lua
 PlanningUI.lua
 Guards.lua
 Minimap.lua
+CharacterUI.lua
+CharacterPanel.lua
