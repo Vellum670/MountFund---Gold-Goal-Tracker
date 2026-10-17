@@ -4,17 +4,242 @@ Newest releases appear first. Release notes begin after version **0.3.1**.
 
 ## Unreleased
 
-- Add a Mountfund tab to the Forever character sheet, with Goals, Savings plan,
-  and Class training pages, native game icons, and a standalone fallback for
-  unsupported character-sheet replacements.
-- Put settings and the copyable bug-report link behind icons on the tab row.
-  Show setting explanations beside the controls on hover and after changes.
-- Keep goal priorities draggable, show preset choices on the left, and create
-  new goals explicitly while existing goals continue saving edits automatically.
+## 1.4.32 - 2026-10-17
+
+- Split new income 75% toward goals and 25% toward spending, without pausing
+  goal contributions to refill a spending buffer.
+- Cover class training from the spending pool while preserving existing goal
+  savings on upgrade. Carry fractional copper forward across small loot amounts.
+- Show spending remaining after training or a training shortfall. Confirm before
+  included class training uses goal savings when training protection is enabled.
+
+## 1.4.31 - 2026-10-17
+
+- Align Wallet, Class training, and Spending in labeled rows with a shared
+  currency column.
+- Add a gold divider beneath New goal and Presets.
+
+## 1.4.30 - 2026-10-17
+
+- Size each tab to its label with modest padding, keeping clear space after
+  Class training instead of stretching the tabs across the row.
+
+## 1.4.29 - 2026-10-17
+
+- Add a Back to goal button above Additional Expenses, returning to the selected
+  goal while preserving unfinished expense input.
+
+## 1.4.28 - 2026-10-17
+
+- Bring the tabs closer to the portrait, halving the stock gap while keeping
+  the portrait clear.
+
+## 1.4.27 - 2026-10-17
+
+- Show the installed MountFund version at the bottom of Settings.
+
+## 1.4.26 - 2026-10-17
+
+- Center action-button labels vertically, including wrapped captions, and align
+  dropdown values, preset labels, counters, and scroll hints consistently.
+- Give all right-pane context balanced text margins, keep centered content on
+  the pane's center, and place Additional Expenses directly below its context.
+
+## 1.4.25 - 2026-10-17
+
+- Protect included training first, then use a 75% goal / 25% reusable spending
+  split. Unused spending room carries across levels and reloads; income tops up
+  the buffer before adding more savings.
+- Apply the split to existing wallets on upgrade and show available spending
+  money beside the wallet summary.
+
+## 1.4.24 - 2026-10-17
+
+- Bring the tabs closer to the portrait while retaining clearance, and lower
+  their labels for better vertical alignment within the tab artwork.
+
+## 1.4.23 - 2026-10-17
+
+- Center Class training icons and text within the whole right pane, with balanced
+  scrollbar spacing so details stay centered whether scrolling is needed or not.
+
+## 1.4.22 - 2026-10-17
+
+- Give goal progress lines a full-width track and hide zero-progress fills,
+  so small amounts no longer appear as stray dots beneath goals.
+
+## 1.4.21 - 2026-10-17
+
+- Align the tab separator with the native Statistics scroll-area line and seat
+  the tabs on that baseline, including when the character sheet is scaled.
+
+## 1.4.20 - 2026-10-17
+
+- Start all right-pane context beneath the title bar and use its full height.
+  Keep the wallet summary within the left pane.
+
+## 1.4.19 - 2026-10-17
+
+- Move Settings and Bug Report into the title bar, just left of Close.
+
+## 1.4.18 - 2026-10-17
+
+- Limit the line beneath the tabs to the left pane, ending at the column divider.
+
+## 1.4.17 - 2026-10-17
+
+- Remove the toast's overlapping title bevel and oversized window border.
+
+## 1.4.16 - 2026-10-17
+
+- Center Class training spell icons, names, and details, and move them closer
+  to the line beneath the tabs.
+
+## 1.4.15 - 2026-10-17
+
+- Use the Statistics page's textured separator with inset ends, align navigation
+  to one baseline, and remove fragmented lines beneath individual tabs.
+- Give buttons native header gradients and tabs rounded tops, flat bottoms,
+  and distinct active artwork. Remove the stray goal-type arrow.
+- Align the MountFund caption with the native character-sheet title position.
+- Show faction-appropriate early-level gold tips and shared routes at higher levels.
+- Default to the first active priority when opening Goals, while preserving drafts.
+
+## 1.4.14 - 2026-10-17
+
+- Cover the equipment-page texture beneath the portrait when the class icon is
+  shown, and refresh portrait clipping after delayed layout or portrait updates.
+- Use MountFund consistently in visible addon names and text.
+
+## 1.4.13 - 2026-10-17
+
+- Join the full-width header line directly to the tabs' bottom edge.
+
+## 1.4.12 - 2026-10-17
+
+- Align the pane divider's tips with the native frame, restore the title-line
+  joins beside the portrait and close button, and extend the line beneath the
+  tabs across both panes.
+
+## 1.4.11 - 2026-10-17
+
+- Keep navigation tabs within the left pane and replace their repeated pane
+  texture with a flat brown tab style.
+- Use continuous native character-sheet backgrounds, with separate left and
+  right pane colors and no stretched bands beneath the tabs.
+- Match the native title bar and outer borders, and connect the full-height
+  pane divider to the title bar and bottom frame.
+
+## 1.4.10 - 2026-10-17
+
+- Remove the extra rectangular background behind notification toasts and keep
+  their title, addon icon, and goal content above the decorative border.
+
+## 1.4.9 - 2026-10-17
+
+- Expand Savings plan rows across more of the left pane and down to its footer.
+  Remove duplicate scrollbar spacing while keeping the scrollbar and gold tips
+  within their areas.
+
+## 1.4.8 - 2026-10-17
+
+- Keep the goal editor's scroll position during refreshes, field edits, icon
+  changes, and goal creation. Continue resetting when switching goals or pages.
+
+## 1.4.7 - 2026-10-17
+
+- Remove inherited red button backgrounds beneath the brown frames on goal
+  controls, settings, and other action buttons.
+
+## 1.4.6 - 2026-10-17
+
+- Keep completed goals beneath the expandable Completed heading instead of
+  mixing them into active priorities. Hide their drag handles and show their
+  recorded completion amounts without restoring a savings allocation.
+
+## 1.4.5 - 2026-10-17
+
+- Extend the drag-handle hover highlight around the whole goal, including its
+  icon and text, using the same subtle gold treatment as the goal row.
+
+## 1.4.4 - 2026-10-17
+
+- Raise the default notification position to leave more room for the game's
+  level-up banner. Preserve custom positions and use the higher spot on reset.
+
+## 1.4.3 - 2026-10-17
+
+- Lighten the matching Settings and Bug Report buttons and their icons so they
+  stand out more clearly against the character pane.
+
+## 1.4.2 - 2026-10-17
+
+- Fix button artwork covering the chosen goal icon. Use a square icon frame and
+  keep goal, preset, Settings, and Bug Report images above button-state artwork.
+
+## 1.4.1 - 2026-10-16
+
+- Rebuild goal priority rows without action-button textures or automatic caption
+  positioning, keeping icons, wrapped names, and progress separate.
+- Keep button backgrounds behind their icons and labels.
+- Put Mountfund's content above native character-page content so other pages
+  and the character level heading cannot show through it.
+
+## 1.4.0 - 2026-10-16
+
+- Add a native Mountfund character-sheet tab with Goals, Savings plan, and
+  Class training pages, plus a standalone fallback for unsupported replacements.
+- Keep the character portrait and its border clear of Mountfund's background,
+  navigation tabs, and wallet summary.
+- Fix character-sheet integration taint that could block opening or closing the
+  normal character pane during combat and cause secret health-value errors.
+- Observe character-sheet visibility through the client's event callbacks,
+  removing native script hooks that could taint health-bar updates when opening
+  the sheet with its normal key binding.
+- Put goal editing in the wider left pane and draggable goal priorities on the
+  right. Keep text and controls inside padded, scrolling sections.
+- Fix a goal-list texture error that could interrupt opening Mountfund on the
+  Forever client.
+- Access Class training through its tab and remove the duplicate goal-editor
+  button that could overlap the savings-style control after a refresh.
+- Match buttons and scrollbars to the character pane. Show scrollbars only when
+  needed and a Scroll for more hint while more content remains below.
+- Keep scrollbar thumbs synchronized with mouse-wheel and programmatic scrolling
+  on Savings plan, Class training, and other scrolling panes.
+- Hide scrollbars and scroll hints when content fits. Release unused hint space
+  and reset stale scroll offsets after goal lists shrink.
+- Style action buttons after the character sheet's Defense and Resistances
+  headers, with native brown textures, ornamental borders, and light captions.
+  Give navigation tabs a separate flat style with a gold active-page underline.
+  Keep hover, pressed, and disabled states visually distinct.
+- Keep hover highlights inside the visible button face, including resized tabs
+  and buttons with wrapped captions.
+- Wrap goal names, settings labels, button captions, savings amounts, and detail
+  text to fit their columns. Resize rows and reflow explanations after pane
+  size changes so text and controls stay readable beside the scrollbars.
+- Keep collapsible gold tips entirely on the left. Show just Lvl 40 Mount and
+  Epic Mount in the Presets chooser.
+- Use the right pane's full height beside the gold tips. Keep Completed at the
+  bottom of short goal lists and let longer lists use the available space.
+  Preserve the right pane's scroll position during refreshes.
+- Replace gold tips on Class training with an explanation of shared protection
+  and spell selection. Include spell labels and bottom padding in the grid's
+  scroll bounds so the last row can be reached fully.
+- Make the Presets button consistently open its chooser and return to the goal
+  editor after selecting a preset or an existing goal.
+- Add a searchable goal-icon selector beside the character pane. Apply icons
+  explicitly; existing goals retain their progress and names.
+- Use Mountfund artwork in Blizzard's addon list and on the character-sheet tab.
+  Remove the minimap button.
+- Match notification toasts to the character pane with native brown and gold
+  textures, the Mountfund icon, framed goal icons, and gold progress bars.
+  Wrap longer text and grow the toast to keep its contents readable.
 - Select training and expense details with left-click; right-click includes or
-  excludes them. Keep shared training choices and unfinished input intact.
-- Keep gold tips visible at the bottom with a saved collapse preference, and
-  contain long names, lists, and forms within scrolling panes.
+  excludes them across all goals. Keep draft input intact when changing pages.
+- Show setting explanations on hover and after changes. Keep settings and the
+  copyable bug-report link behind icons on the tab row.
+- Give Settings and Report a bug matching square frames, centered icons,
+  consistent padding, and equal spacing on the navigation row.
 
 ## 1.3.4 - 2026-10-16
 

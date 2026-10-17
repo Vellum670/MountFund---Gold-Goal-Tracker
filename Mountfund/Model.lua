@@ -89,11 +89,22 @@ function Model.FormatCoins(amount)
     return string.format("%dg %ds %dc", gold, silver, copper)
 end
 
+-- Icon input never invalidates an otherwise valid saved goal. Drop only bad artwork.
+function Model.NormalizeIcon(icon)
+    if integer(icon,1,2147483647) then return icon end
+    if type(icon)~="string" or #icon>240 then return nil end
+    local normalized=icon:gsub("/","\\")
+    if ns.ADDON_ICON and normalized:lower()==ns.ADDON_ICON:lower() then return ns.ADDON_ICON end
+    local name=normalized:match("^[Ii][Nn][Tt][Ee][Rr][Ff][Aa][Cc][Ee]\\[Ii][Cc][Oo][Nn][Ss]\\([%w_%-]+)$")
+    if name then return "Interface\\Icons\\" .. name end
+end
+
 function Model.CopyGoal(goal)
     local result = {}
     for key, value in pairs(goal) do
         if key ~= "milestones" and key ~= "expenses" then result[key] = value end
     end
+    result.icon=Model.NormalizeIcon(goal.icon)
     result.milestones, result.expenses = {}, {}
     for level, amount in pairs(goal.milestones or {}) do result.milestones[level] = amount end
     for index, expense in ipairs(goal.expenses or {}) do
@@ -286,17 +297,35 @@ function Model.GoalProgress(goal, level)
         percent = goal.targetCopper > 0 and math.min(100, saved / goal.targetCopper * 100) or 100 }
 end
 
-function Model.Reconcile(goals, balance)
-    local left = math.max(0, balance)
+-- Goal allocations have priority; class training belongs to the shared spending
+-- pool. Wallet targets seed new allocations, while income is split independently.
+function Model.WalletSplit(balance, trainingDue)
+    balance = integer(balance, 0, Model.MAX_COPPER) and balance or 0
+    if trainingDue == nil then trainingDue = 0 end
+    trainingDue = integer(trainingDue, 0, Model.MAX_COPPER) and trainingDue or balance
+    local goalLimit = math.floor(balance * 3 / 4)
+    local spendingTarget = balance - goalLimit
+    local trainingFunded = math.min(spendingTarget, trainingDue)
+    return {balance=balance, trainingDue=trainingDue, trainingFunded=trainingFunded,
+        trainingShortfall=trainingDue-trainingFunded, goalLimit=goalLimit,
+        spendingTarget=spendingTarget}
+end
+
+function Model.Reconcile(goals, balance, trainingDue)
+    local split = Model.WalletSplit(balance, trainingDue)
+    local left = split.balance
     for _, goal in ipairs(goals) do
         if goal.active then
             goal.savedCopper = math.min(goal.savedCopper or 0, goal.targetCopper, left)
             left = left - goal.savedCopper
         else goal.savedCopper = 0 end
     end
+    return split.balance - left
 end
 
 function Model.Budget(goals, level, balance, trainingDue)
+    local split = Model.WalletSplit(balance, trainingDue)
+    balance, trainingDue = split.balance, split.trainingDue
     local saved, expected = 0, 0
     for _, goal in ipairs(goals) do
         if goal.active then
@@ -305,32 +334,52 @@ function Model.Budget(goals, level, balance, trainingDue)
         end
     end
     saved = math.min(balance, saved)
-    trainingDue = math.max(0, trainingDue or 0)
-    local trainingFunded = math.min(math.max(0, balance - saved), trainingDue)
+    local spendingBalance = balance - saved
+    local trainingFunded = math.min(spendingBalance, trainingDue)
     return { balance = balance, saved = saved, expected = expected,
         ahead = math.max(0, saved - expected), behind = math.max(0, expected - saved),
         trainingDue = trainingDue, trainingFunded = trainingFunded,
-        trainingShortfall = trainingDue - trainingFunded, reserved = saved + trainingFunded }
+        trainingShortfall = trainingDue - trainingFunded, reserved = saved + trainingFunded,
+        spendingTarget = split.spendingTarget, spendingBalance = spendingBalance,
+        spendingAvailable = spendingBalance - trainingFunded, goalLimit = split.goalLimit }
 end
 
-function Model.FundGoals(goals, amount, balance, trainingDue, level)
-    Model.Reconcile(goals, balance)
-    local budget = Model.Budget(goals, 1, balance, trainingDue)
-    local left = math.min(amount, math.max(0, balance - budget.saved - (trainingDue or 0)))
-    local ordered = {}
-    for _, goal in ipairs(goals) do if goal.active then ordered[#ordered + 1] = goal end end
-    for _, goal in ipairs(ordered) do
-        local addition = math.min(left, math.max(0, goal.targetCopper - (goal.savedCopper or 0)))
-        goal.savedCopper = (goal.savedCopper or 0) + addition
-        left = left - addition
+local function allocateGoals(goals, amount)
+    local left = amount
+    for _, goal in ipairs(goals) do
+        if goal.active then
+            local addition = math.min(left, math.max(0, goal.targetCopper - (goal.savedCopper or 0)))
+            goal.savedCopper = (goal.savedCopper or 0) + addition
+            left = left - addition
+        end
     end
 end
 
-function Model.InitialInvestment(balance, trainingDue, allocated, percent, override, target)
-    if balance < trainingDue then return 0 end
-    local free = math.max(0, balance - trainingDue - allocated)
-    local wanted = override or math.floor(balance * (percent or 20) / 100)
-    return math.floor(math.max(0, math.min(wanted, free, target)))
+-- Explicit goal edits may seed the unallocated portion of the wallet target.
+function Model.FundGoals(goals, amount, balance, trainingDue, level)
+    local split = Model.WalletSplit(balance, trainingDue)
+    local saved = Model.Reconcile(goals, split.balance, split.trainingDue)
+    amount = integer(amount, 0, Model.MAX_COPPER) and amount or 0
+    allocateGoals(goals, math.min(amount, math.max(0, split.goalLimit - saved)))
+end
+
+-- Carry quarter-copper units so repeated small loots receive the same split as
+-- one combined payment. Callers keep real and preview remainders separate.
+function Model.FundIncome(goals, amount, balance, trainingDue, remainder)
+    local split = Model.WalletSplit(balance, trainingDue)
+    local saved = Model.Reconcile(goals, split.balance, split.trainingDue)
+    amount = integer(amount, 0, Model.MAX_COPPER) and math.min(amount, split.balance) or 0
+    remainder = integer(remainder, 0, 3) and remainder or 0
+    local quarters = amount * 3 + remainder
+    allocateGoals(goals, math.min(math.floor(quarters / 4), split.balance - saved))
+    return quarters % 4
+end
+
+function Model.InitialInvestment(balance, trainingDue, allocated, target)
+    local split = Model.WalletSplit(balance, trainingDue)
+    allocated = integer(allocated, 0, Model.MAX_COPPER) and allocated or split.goalLimit
+    target = integer(target, 0, Model.MAX_COPPER) and target or 0
+    return math.max(0, math.min(split.goalLimit - allocated, target))
 end
 
 function Model.Purchase(goals, level, balance, cost, trainingDue, plannedTraining)

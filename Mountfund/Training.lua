@@ -80,6 +80,7 @@ function ns.SetTrainingAbility(expense, selected, staged)
     if preview then ns.testTrainingSelections = updated else ns.db.classTrainingSelections = updated end
     if not preview or ns.testGoals then
         for _, goal in ipairs(ns.GetGoals()) do ns.SyncExpenses(goal) end
+        ns.ApplyWalletRule(false)
     end
     ns.Changed()
 end

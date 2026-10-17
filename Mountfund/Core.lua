@@ -78,7 +78,7 @@ function ns.WarningCooldownRemaining()
 end
 
 function ns.Print(text)
-    DEFAULT_CHAT_FRAME:AddMessage("|cffffd36eMountfund:|r " .. text)
+    DEFAULT_CHAT_FRAME:AddMessage("|cffffd36eMountFund:|r " .. text)
 end
 
 function ns.GetBudget()
@@ -148,8 +148,8 @@ function ns.BuildGoalStatus(real, levelOverride)
     local goals = {}
     for index, goal in ipairs(source) do goals[index] = ns.Model.CopyGoal(goal) end
     ns.SyncStatusIntervals(goals, level)
-    ns.Model.Reconcile(goals, balance)
     local training, complete, nextLevel, costs = ns.TrainingRunway(nil, nil, goals, level, real)
+    ns.Model.Reconcile(goals, balance, training)
     costs = costs or {current = 0, upcoming = 0, currentComplete = true, upcomingComplete = true}
     local budget = ns.Model.Budget(goals, level, balance, training)
     local sections = {
@@ -193,7 +193,7 @@ function ns.PrintStatus(real, levelOverride)
     if real then ns.SyncStatusIntervals(ns.db.goals, levelOverride or UnitLevel("player")) end
     local status = ns.BuildGoalStatus(real, levelOverride)
     local function line(text) DEFAULT_CHAT_FRAME:AddMessage(text) end
-    line("|cffffd36eMountfund • Goal summary|r")
+    line("|cffffd36eMountFund • Goal summary|r")
     line("  " .. (not real and ns.testMoneyCopper ~= nil and "Test wallet: " or "Wallet: ") .. ns.StatusCoins(status.balance))
     local costs = status.trainingCosts
     if costs.current > 0 or not costs.currentComplete then
@@ -254,7 +254,6 @@ function ns.BuildLevelUpSummary(level)
     local balance = ns.GetPlayerMoney()
     local goals={}
     for index,goal in ipairs(ns.GetGoals()) do goals[index]=ns.Model.CopyGoal(goal) end
-    ns.Model.Reconcile(goals, balance)
     local ordered = {}
     for index, goal in ipairs(goals) do
         if goal.active and not (ns.db.trainingProtection==false and goal.targetCopper==0 and goal.includeClassTraining) then ordered[#ordered + 1] = { goal = goal, index = index } end
@@ -271,15 +270,15 @@ function ns.BuildLevelUpSummary(level)
         return a.index < b.index
     end)
     local training, trainingComplete = ns.TrainingRunway(nil, nil, goals, level)
+    ns.Model.Reconcile(goals, balance, training)
     local budget = ns.Model.Budget(goals, level, balance, training)
     local summary = { level = level, balance = balance, goals = {}, activeCount = #ordered,
         remainingCount = math.max(0, #ordered - 2) }
     for index = 1, math.min(2, #ordered) do
         local goal = ordered[index].goal
         local progress = ns.Model.GoalProgress(goal, level)
-        local preset = ns.FindPreset and ns.FindPreset(goal.presetID)
         local row = { name = goal.name, targetLevel = goal.targetLevel, goalType=goal.goalType,
-            icon = goal.icon or (preset and preset.icon) or "Interface\\Icons\\INV_Misc_Coin_01",
+            icon = ns.GoalIcon(goal),
             saved = progress.saved, target = progress.target, expected = progress.expected,
             percent = progress.percent, ahead = progress.ahead, behind = progress.behind }
         if goal.targetCopper == 0 and goal.includeClassTraining then
@@ -311,9 +310,9 @@ function ns.PrepareGoal(goal, replacing)
                 trainingGoals[#trainingGoals + 1] = existing
             end
         end
-        local training, complete = ns.TrainingRunway(goal, true, trainingGoals)
-        goal.initialCopper = complete and ns.Model.InitialInvestment(ns.GetPlayerMoney(), training, allocated,
-            goal.initialPercent, goal.initialOverrideCopper, goal.targetCopper) or 0
+        local training = ns.TrainingRunway(goal, true, trainingGoals)
+        goal.initialCopper = ns.Model.InitialInvestment(ns.GetPlayerMoney(), training, allocated,
+            goal.targetCopper)
         goal.savedCopper = goal.initialCopper
     end
     return goal
@@ -336,15 +335,29 @@ function ns.ObserveMoney()
         record.income = record.income + difference
         -- Actual income still uses the character's real training needs while
         -- a test level is active; previewing levels must not change funding.
-        ns.Model.FundGoals(ns.db.goals, difference, balance, ns.TrainingRunway(nil, nil, ns.db.goals, level), level)
+        ns.db.walletIncomeRemainder = ns.Model.FundIncome(ns.db.goals, difference, balance,
+            ns.TrainingRunway(nil, nil, ns.db.goals, level, true), ns.db.walletIncomeRemainder)
     else
         record.spending = record.spending - difference
-        ns.Model.Reconcile(ns.db.goals, balance)
+        ns.Model.Reconcile(ns.db.goals, balance, ns.TrainingRunway(nil, nil, ns.db.goals, level, true))
     end
     ns.Changed()
 end
 
+function ns.ApplyWalletRule(fund)
+    if not ns.db then return end
+    local preview = ns.testMoneyCopper ~= nil
+    local goals = preview and ns.testGoals or ns.db.goals
+    if not goals then return end
+    local level = preview and ns.GetPlayerLevel() or UnitLevel("player")
+    local balance = preview and ns.GetPlayerMoney() or GetMoney()
+    local training = ns.TrainingRunway(nil, nil, goals, level, not preview)
+    if fund then ns.Model.FundGoals(goals, balance, balance, training)
+    else ns.Model.Reconcile(goals, balance, training) end
+end
+
 function ns.Changed()
+    ns.ApplyWalletRule(false)
     if ns.RefreshUI then ns.RefreshUI() end
     if ns.CheckGoalCompletion then ns.CheckGoalCompletion() end
 end
@@ -352,6 +365,14 @@ end
 function ns.CancelPurchase()
     ns.pending = nil
     if ns.warningFrame then ns.warningFrame:Hide() end
+end
+
+local function purchaseWarningReason(action, budget)
+    if action.excludedTraining then
+        if ns.db.warnings and ns.WarningCooldownRemaining() == 0 then return "excluded" end
+    elseif action.classTraining and ns.db.trainingProtection ~= false and budget.savingsUsed > 0 then
+        return "trainingSavings"
+    end
 end
 
 -- Read the transaction again at confirmation time: UI selections and quotes can change.
@@ -373,10 +394,11 @@ function ns.RequestPurchase(read, execute)
     end
     local level = UnitLevel("player")
     local budget = ns.Model.Purchase(ns.db.goals, level, GetMoney(), action.cost,
-        ns.TrainingRunway(nil, nil, ns.db.goals, level), action.classTraining and not action.excludedTraining)
+        ns.TrainingRunway(nil, nil, ns.db.goals, level, true), action.classTraining and not action.excludedTraining)
     if not budget.affordable then ns.Print("You do not have enough money for this purchase."); return end
-    if ns.db.warnings and action.excludedTraining and ns.WarningCooldownRemaining() == 0 then
-        ns.pending = { read = read, execute = execute, action = action, budget = budget }
+    local reason = purchaseWarningReason(action, budget)
+    if reason then
+        ns.pending = { read = read, execute = execute, action = action, budget = budget, reason = reason }
         ns.ShowWarning(ns.pending)
         return
     end
@@ -394,23 +416,26 @@ function ns.ConfirmPurchase()
     end
     local level = UnitLevel("player")
     local budget = ns.Model.Purchase(ns.db.goals, level, GetMoney(), action.cost,
-        ns.TrainingRunway(nil, nil, ns.db.goals, level), action.classTraining and not action.excludedTraining)
+        ns.TrainingRunway(nil, nil, ns.db.goals, level, true), action.classTraining and not action.excludedTraining)
     if not budget.affordable then ns.Print("You no longer have enough money for this purchase."); return end
-    if not ns.db.warnings or not action.excludedTraining then pending.execute(); return end
+    local reason = purchaseWarningReason(action, budget)
+    if not reason then pending.execute(); return end
     -- Display refreshes do not change what the player is approving. Reconfirm
     -- only when the actual wallet or protected spending impact has changed.
-    if budget.balance ~= pending.budget.balance
+    if reason ~= pending.reason or budget.savingsUsed ~= pending.budget.savingsUsed
+        or budget.balance ~= pending.budget.balance
         or budget.reserved ~= pending.budget.reserved or budget.afterShortfall ~= pending.budget.afterShortfall then
         ns.RequestPurchase(pending.read, pending.execute)
         return
     end
-    -- A confirmed warning allows follow-up purchases for this session only.
-    -- Price, selection and affordability checks still run during the grace period.
-    ns.warningCooldownUntil = GetTime() + ns.GetWarningSilenceSeconds()
+    -- Excluded-ability warnings share a grace period. A fresh purchase using
+    -- goal savings always needs its own approval while training is protected.
+    if reason == "excluded" then ns.warningCooldownUntil = GetTime() + ns.GetWarningSilenceSeconds() end
     pending.execute()
 end
 
 local function StartSession()
+    ns.testIncomeRemainder = nil
     ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals, ns.testTrainingSelections = nil, nil, nil, nil
     if ns.RefreshTestContext then ns.RefreshTestContext() end
     ns.CancelPurchase()
@@ -433,13 +458,19 @@ local function StartSession()
             ns.PrepareGoal(goal, goal)
         else ns.SyncExpenses(goal, true) end
     end
-    ns.Model.Reconcile(ns.db.goals, GetMoney())
+    local training = ns.TrainingRunway(nil, nil, ns.db.goals, UnitLevel("player"), true)
+    if ns.db.walletRuleVersion == nil then
+        ns.Model.FundGoals(ns.db.goals, GetMoney(), GetMoney(), training)
+    else ns.Model.Reconcile(ns.db.goals, GetMoney(), training) end
+    ns.db.walletRuleVersion = 2
+    if not ns.Model.IsInteger(ns.db.walletIncomeRemainder, 0, 3) then ns.db.walletIncomeRemainder = 0 end
     ns.db.version = 2
     resetStatusClock()
     ns.Changed()
 end
 
 local function Initialize()
+    ns.testIncomeRemainder = nil
     ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals, ns.testTrainingSelections = nil, nil, nil, nil
     ns.loginToastHandled = nil
     ns.statusLoginHandled=nil
@@ -458,11 +489,12 @@ local function Initialize()
     ns.db.warningSilenceSeconds = ns.GetWarningSilenceSeconds()
     if ns.db.warnings == nil then ns.db.warnings = true end
     if ns.db.levelUpToasts == nil then ns.db.levelUpToasts = true end
-    if type(ns.db.showMinimapButton) ~= "boolean" then ns.db.showMinimapButton = true end
     ns.db.goals = type(ns.db.goals) == "table" and ns.db.goals or {}
     local valid = {}
     for _, goal in ipairs(ns.db.goals) do
-        if type(goal)=="table" then ns.Model.MigrateCurve(goal) end
+        if type(goal)=="table" then
+            ns.Model.MigrateCurve(goal); goal.icon=ns.Model.NormalizeIcon(goal.icon)
+        end
         if ns.Model.ValidateGoal(goal) then valid[#valid + 1] = goal end
     end
     if #valid ~= #ns.db.goals then ns.Print("Some saved goals were invalid and were skipped.") end
@@ -491,7 +523,6 @@ local function Initialize()
         end
     end
     ns.MigrateTrainingSelections()
-    if ns.RefreshMinimapButton then ns.RefreshMinimapButton() end
     resetStatusClock()
     if ns.RefreshTestContext then ns.RefreshTestContext() end
 end
@@ -509,7 +540,6 @@ frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
     if not ns.db then return end
     if event == "PLAYER_LOGIN" then
         StartSession()
-        if ns.RefreshMinimapButton then ns.RefreshMinimapButton() end
     end
     if event == "TIME_PLAYED_MSG" and UnitLevel("player") == 60 and ns.Model.IsInteger(isReloadingUi, 0, ns.Model.MAX_COPPER) then
         ns.db.level60PlayedSeconds = isReloadingUi
@@ -535,7 +565,6 @@ frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
     if event=="PLAYER_LEAVING_WORLD" then ns.outOfWorld=true; ns.FlushPlayClock() end
     if (event=="DISPLAY_SIZE_CHANGED" or event=="UI_SCALE_CHANGED") and ns.ApplyToastPosition then ns.ApplyToastPosition() end
     if event == "PLAYER_LOGOUT" then
-        if ns.FinishMinimapDrag then ns.FinishMinimapDrag() end
         -- /reload does not reliably blur the focused edit box before saving
         -- SavedVariables. Flush while the editor still has its original goal
         -- context, including the session-only wallet when testing.
@@ -543,6 +572,7 @@ frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
         if ns.FinishToastMove then ns.FinishToastMove() end
         ns.FlushPlayClock()
         ns.outOfWorld=true
+        ns.testIncomeRemainder = nil
         ns.testPlayerLevel, ns.testMoneyCopper, ns.testGoals, ns.testTrainingSelections = nil, nil, nil, nil
         if ns.RefreshTestContext then ns.RefreshTestContext() end
         ns.CancelPurchase()
@@ -566,6 +596,7 @@ frame:SetScript("OnEvent", function(_, event, arg, isReloadingUi)
             ns.lastLevelUpEvent = level
             if level == 60 then ns.db.level60PlayedSeconds = 0; ns.level60StartedAt = GetTime() end
             C_Timer.After(0, function()
+                ns.ApplyWalletRule(false)
                 ns.SyncStatusIntervals(ns.db.goals,level)
                 if ns.RefreshUI then ns.RefreshUI() end
                 if ns.db.milestoneChatSummaries ~= false and hasStatusGoal("level") then ns.PrintStatus(true,level) end
@@ -654,6 +685,7 @@ SlashCmdList.MOUNTFUND = function(message)
                 or ("Test gold inactive; actual wallet: " .. ns.Model.FormatCoins(GetMoney()) .. "."))
             TestGoldUsage()
         elseif argument == "reset" then
+            ns.testIncomeRemainder = nil
             ns.testMoneyCopper, ns.testGoals, ns.testTrainingSelections = nil, nil, nil
             RefreshTestPreview(false, true)
             ns.Print("Test gold reset; using actual wallet " .. ns.Model.FormatCoins(GetMoney()) .. ".")
@@ -666,15 +698,16 @@ SlashCmdList.MOUNTFUND = function(message)
             if ns.ui and ns.ui:IsShown() and ns.SaveAllFields then ns.SaveAllFields(true) end
             local previous = ns.GetPlayerMoney()
             if not ns.testGoals then
+                ns.testIncomeRemainder = ns.db.walletIncomeRemainder
                 ns.testGoals = {}
                 for index, goal in ipairs(ns.db.goals) do ns.testGoals[index] = ns.Model.CopyGoal(goal) end
             end
             ns.testMoneyCopper = balance
             local difference = balance - previous
             if difference > 0 then
-                ns.Model.FundGoals(ns.testGoals, difference, balance,
-                    ns.TrainingRunway(nil, nil, ns.testGoals, ns.GetPlayerLevel()))
-            else ns.Model.Reconcile(ns.testGoals, balance) end
+                ns.testIncomeRemainder = ns.Model.FundIncome(ns.testGoals, difference, balance,
+                    ns.TrainingRunway(nil, nil, ns.testGoals, ns.GetPlayerLevel()), ns.testIncomeRemainder)
+            else ns.ApplyWalletRule(false) end
             RefreshTestPreview(true, true)
             ns.Print("Test gold set to " .. ns.Model.FormatCoins(balance) .. "; actual wallet "
                 .. ns.Model.FormatCoins(GetMoney()) .. ". Test goal progress clears on reload or logout.")

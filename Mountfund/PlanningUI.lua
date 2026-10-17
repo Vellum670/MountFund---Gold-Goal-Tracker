@@ -96,7 +96,7 @@ function ns.SetPlanningContentWidth(page,width,height)
     page.hostGridHeight=type(height)=="number" and height==height and height~=math.huge and math.max(42,height) or nil
     page.goalName:SetWidth(width); page.summary:SetWidth(width); page.hint:SetWidth(width)
     page.manual:SetWidth(width)
-    page.scroll:SetWidth(math.max(62,width-18)); page.content:SetWidth(math.max(60,width-20))
+    page.scroll:SetWidth(math.max(62,width-22)); page.content:SetWidth(math.max(60,width-24))
     ns.RefreshExpensePlanner()
 end
 local function showTooltip(button)
@@ -153,6 +153,7 @@ function ns.RefreshExpensePlanner()
     if ns.db.trainingProtection==false then
         page.summary:SetText(page.classMode and "Training protection is off" or ("Goal target " .. ns.MoneyText(page.goal.targetCopper)))
     end
+    if page.hostWidth then page.goalName:Hide(); page.summary:Hide() end
     local className=UnitClass("player")
     page.hint:SetText(page.hostWidth and "Left-click for details. Right-click to include or exclude."
         or page.classMode and ((className or "Class") .. " - level " .. ns.GetPlayerLevel() .. " - next upgrades")
@@ -160,6 +161,7 @@ function ns.RefreshExpensePlanner()
     page.expenseButtons=page.expenseButtons or {}; for _,button in ipairs(page.expenseButtons) do button:Hide() end
     local groups=ns.AbilityGroups(page.goal,page.classMode); page.groups=groups
     local columns=math.max(1,math.floor(((page.hostWidth and page.content:GetWidth() or 352)+2)/44))
+    local rowHeight=54
     for index,group in ipairs(groups) do
         local button=page.expenseButtons[index]
         if not button then
@@ -169,7 +171,7 @@ function ns.RefreshExpensePlanner()
             button.icon:SetTexCoord(0.07,0.93,0.07,0.93)
             button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square","BLEND")
             local glow=button:GetHighlightTexture(); glow:ClearAllPoints(); glow:SetPoint("TOPLEFT",2,-2); glow:SetPoint("BOTTOMRIGHT",-2,2); glow:SetColorTexture(1,1,1,0.12)
-            button.level=UI.Label(button,"",-2,-39,40,"GameFontDisableSmall"); button.level:SetJustifyH("CENTER")
+            button.level=UI.Label(button,"",-2,-39,40,"GameFontDisableSmall"); button.level:SetJustifyH("CENTER"); button.level:SetJustifyV("MIDDLE")
             button:RegisterForClicks("LeftButtonUp","RightButtonUp")
             button:SetScript("OnClick",function(self,mouseButton)
                 ns.SelectPlanningGroup(page,self.key)
@@ -196,14 +198,28 @@ function ns.RefreshExpensePlanner()
             button.deleteExpense:SetScript("OnLeave",function() GameTooltip:Hide() end)
         end
         if button.deleteExpense then button.deleteExpense:SetShown(deletable) end
-        button:ClearAllPoints(); button:SetPoint("TOPLEFT",6+((index-1)%columns)*44,-math.floor((index-1)/columns)*54-2)
         button.icon:SetTexture(ns.ExpenseIcon(group.expense))
         local included=group.included
         button.icon:SetDesaturated(not included); local tint=included and 1 or 0.5; button.icon:SetVertexColor(tint,tint,tint)
         updateSelectionBorder(button)
         button.level:SetText(group.maxed and "Max" or "Lv " .. group.requiredLevel); button:Enable(); button:EnableMouse(true); button:Show()
+        if page.hostWidth then
+            button.level:SetHeight(0); button.level:SetWordWrap(true); button.level:SetNonSpaceWrap(true)
+            button.level:SetMaxLines(0)
+            local labelHeight=math.ceil(button.level:GetStringHeight() or 12)+2
+            button.level:SetHeight(labelHeight)
+            rowHeight=math.max(rowHeight,41+labelHeight+6)
+        end
     end
-    local rows=math.ceil(#groups/columns); page.content:SetHeight(math.max(1,rows*54))
+    -- The scroll child includes labels below the icons and a bottom gutter, so
+    -- the final row can clear the viewport edge even with larger game fonts.
+    for index=1,#groups do
+        local button=page.expenseButtons[index]
+        button:ClearAllPoints()
+        button:SetPoint("TOPLEFT",(page.hostWidth and 4 or 6)+((index-1)%columns)*44,-math.floor((index-1)/columns)*rowHeight-2)
+    end
+    local rows=math.ceil(#groups/columns)
+    page.content:SetHeight(math.max(1,rows*rowHeight+(page.hostWidth and 8 or 0)))
     page.empty:SetText(#groups==0 and (page.classMode and "No training abilities found for this class." or "Add a purchase below to get started.") or "")
     local selectedKey=page.selectedGroupKey
     local found=false
@@ -219,6 +235,7 @@ function ns.RefreshExpensePlanner()
         page.manual:ClearAllPoints(); page.manual:SetPoint("TOPLEFT",0,-(84+grid+14))
         ns.ResizePage(55+84+grid+14+82+46)
     end
+    if page.hostWidth and ns.RefreshScrollRange then ns.RefreshScrollRange(page.scroll) end
 end
 local function storeManualDraft(page)
     local pending={index=ns.ui.selectedGoalIndex,name=page.goal.name,expenseName=page.expenseName:GetText(),level=page.expenseLevel:GetText(),coins={},key=page.manualKey}
@@ -257,7 +274,7 @@ function ns.OpenExpensePlanner(goal,onChange,classOnly)
         page.goalName=UI.Label(page,"",0,0,368); page.goalName:SetWordWrap(false)
         page.summary=UI.Label(page,"",0,-24,368,"GameFontHighlightSmall")
         page.hint=UI.Label(page,"",0,-59,368,"GameFontDisableSmall")
-        page.scroll=CreateFrame("ScrollFrame",nil,page,"UIPanelScrollFrameTemplate"); page.scroll:SetPoint("TOPLEFT",0,-84); page.scroll:SetSize(354,classOnly and 260 or 124)
+        page.scroll=CreateFrame("ScrollFrame",nil,page,ns.ui.characterMode and "ScrollFrameTemplate" or "UIPanelScrollFrameTemplate"); page.scroll:SetPoint("TOPLEFT",0,-84); page.scroll:SetSize(354,classOnly and 260 or 124)
         page.content=CreateFrame("Frame",nil,page.scroll); page.content:SetSize(352,1); page.scroll:SetScrollChild(page.content)
         page.empty=UI.Label(page.content,"",0,-4,350,"GameFontHighlightSmall")
         page.manual=CreateFrame("Frame",nil,page); page.manual:SetSize(368,82)
